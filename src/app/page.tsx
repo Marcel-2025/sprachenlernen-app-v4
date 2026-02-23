@@ -979,25 +979,26 @@ async function downloadAndAddPack() {
                   <div className="text-sm text-slate-600 dark:text-slate-400">Lernsprache</div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {(["EN", "ES", "FR", "RU"] as Lang[]).map((l) => (
-                      <button
-                        key={l}
-                        onClick={() => {
-                          setData((prev) => ({ ...prev, profile: { ...prev.profile, targetLang: l } }));
-                          // if no cards exist for that language, seed immediately
-                          setTimeout(() => {
-                            setData((prev) => {
-                              const has = prev.cards.some((c) => c.targetLang === l);
-                              if (has) return prev;
-                              return { ...prev, cards: [...seedCardsFromPack(l, prev.profile.level, 30), ...prev.cards] };
-                            });
-                          }, 0);
-                        }}
-                        className={`rounded-2xl border px-4 py-2 font-semibold shadow-sm hover:shadow ${
-                          target === l ? "border-indigo-200 bg-indigo-50 dark:border-indigo-900 dark:bg-slate-900" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
-                        }`}
-                      >
-                        {l}
-                      </button>
+                    <button
+                      key={l}
+                      onClick={() => {
+                        // 1. Nur die Zielsprache im Profil ändern
+                        setData((prev) => ({ 
+                          ...prev, 
+                          profile: { ...prev.profile, targetLang: l } 
+                        }));
+                        
+                        // Das automatische Nachladen passiert jetzt über den useEffect, 
+                        // den wir vorhin für 'downloadAndAddPack' erstellt haben.
+                      }}
+                      className={`rounded-2xl border px-4 py-2 font-semibold shadow-sm hover:shadow ${
+                        target === l 
+                          ? "border-indigo-200 bg-indigo-50 dark:border-indigo-900 dark:bg-slate-900" 
+                          : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
+                      }`}
+                    >
+                      {l}
+                    </button>
                     ))}
                   </div>
                   <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Deutsch ist aktuell die Muttersprache (DE).</div>
