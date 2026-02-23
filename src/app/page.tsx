@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { loadLanguagePack } from "@/lib/loadLanguagePack";
 
 /** ===========================================
  *  SprachenlernApp – Auto-Language Mode
@@ -85,96 +86,8 @@ const TTS_LANG: Record<Lang | "DE", string> = {
   RU: "ru-RU",
 };
 
-/** ---------- Starter Packs (offline) ----------
- *  Kleines Starter-Pack – wir können später massiv erweitern / Download-Packs bauen.
- */
-const PACKS: Record<Lang, { vocab: Array<{ de: string; x: string; ex?: string; exTr?: string }>; sentences: Array<{ de: string; x: string }> }> =
-  {
-    EN: {
-      vocab: [
-        { de: "laufen", x: "to run", ex: "Ich laufe jeden Morgen.", exTr: "I run every morning." },
-        { de: "essen", x: "to eat", ex: "Ich esse gern Pasta.", exTr: "I like eating pasta." },
-        { de: "trinken", x: "to drink", ex: "Trinkst du Wasser?", exTr: "Are you drinking water?" },
-        { de: "Zeit", x: "time", ex: "Ich habe keine Zeit.", exTr: "I have no time." },
-        { de: "Freund", x: "friend", ex: "Er ist mein Freund.", exTr: "He is my friend." },
-        { de: "lernen", x: "to learn", ex: "Ich lerne Englisch.", exTr: "I am learning English." },
-        { de: "Arbeit", x: "work", ex: "Ich gehe zur Arbeit.", exTr: "I go to work." },
-        { de: "Haus", x: "house", ex: "Das Haus ist groß.", exTr: "The house is big." },
-        { de: "Buch", x: "book", ex: "Das Buch ist interessant.", exTr: "The book is interesting." },
-        { de: "heute", x: "today", ex: "Heute ist Montag.", exTr: "Today is Monday." },
-      ],
-      sentences: [
-        { de: "Ich gehe heute nicht zur Arbeit.", x: "I am not going to work today." },
-        { de: "Kannst du mir bitte helfen?", x: "Can you please help me?" },
-        { de: "Wie spät ist es?", x: "What time is it?" },
-        { de: "Ich verstehe das nicht.", x: "I don't understand that." },
-        { de: "Ich möchte einen Kaffee.", x: "I would like a coffee." },
-      ],
-    },
-    ES: {
-      vocab: [
-        { de: "Hallo", x: "hola" },
-        { de: "bitte", x: "por favor" },
-        { de: "danke", x: "gracias" },
-        { de: "Wasser", x: "agua" },
-        { de: "essen", x: "comer" },
-        { de: "trinken", x: "beber" },
-        { de: "Haus", x: "casa" },
-        { de: "Freund", x: "amigo" },
-        { de: "Zeit", x: "tiempo" },
-        { de: "heute", x: "hoy" },
-      ],
-      sentences: [
-        { de: "Ich möchte einen Kaffee, bitte.", x: "Quisiera un café, por favor." },
-        { de: "Ich verstehe das nicht.", x: "No entiendo eso." },
-        { de: "Wo ist die Toilette?", x: "¿Dónde está el baño?" },
-        { de: "Kannst du mir helfen?", x: "¿Puedes ayudarme?" },
-        { de: "Wie spät ist es?", x: "¿Qué hora es?" },
-      ],
-    },
-    FR: {
-      vocab: [
-        { de: "Hallo", x: "bonjour" },
-        { de: "bitte", x: "s'il vous plaît" },
-        { de: "danke", x: "merci" },
-        { de: "Wasser", x: "eau" },
-        { de: "essen", x: "manger" },
-        { de: "trinken", x: "boire" },
-        { de: "Haus", x: "maison" },
-        { de: "Freund", x: "ami" },
-        { de: "Zeit", x: "temps" },
-        { de: "heute", x: "aujourd'hui" },
-      ],
-      sentences: [
-        { de: "Ich möchte einen Kaffee, bitte.", x: "Je voudrais un café, s'il vous plaît." },
-        { de: "Ich verstehe das nicht.", x: "Je ne comprends pas." },
-        { de: "Wo ist die Toilette?", x: "Où sont les toilettes ?" },
-        { de: "Kannst du mir helfen?", x: "Peux-tu m'aider ?" },
-        { de: "Wie spät ist es?", x: "Quelle heure est-il ?" },
-      ],
-    },
-    RU: {
-      vocab: [
-        { de: "Hallo", x: "привет" },
-        { de: "bitte", x: "пожалуйста" },
-        { de: "danke", x: "спасибо" },
-        { de: "Wasser", x: "вода" },
-        { de: "essen", x: "есть" },
-        { de: "trinken", x: "пить" },
-        { de: "Haus", x: "дом" },
-        { de: "Freund", x: "друг" },
-        { de: "Zeit", x: "время" },
-        { de: "heute", x: "сегодня" },
-      ],
-      sentences: [
-        { de: "Ich verstehe das nicht.", x: "Я не понимаю." },
-        { de: "Kannst du mir helfen?", x: "Ты можешь мне помочь?" },
-        { de: "Wie spät ist es?", x: "Который час?" },
-        { de: "Ich möchte einen Kaffee, bitte.", x: "Я хотел(а) бы кофе, пожалуйста." },
-        { de: "Wo ist die Toilette?", x: "Где туалет?" },
-      ],
-    },
-  };
+// In deiner Haupt-Komponente (App oder Page)
+const [isDownloading, setIsDownloading] = useState(false);
 
 /** ---------- Helpers ---------- */
 function uid() {
@@ -666,13 +579,51 @@ function review(correct: boolean) {
   updateStreakIfGoalMet(todayStat.reviewed + 1);
 }
 
-  function addMoreStarterCards(n: number) {
+async function downloadAndAddPack() {
+  try {
+    setIsDownloading(true);
+    const targetLang = data.profile.targetLang;
+
+    // 1. Pack laden (von GitHub Raw URL via loadLanguagePack.ts)
+    // Dies prüft automatisch erst in der IndexedDB (offline) und dann online
+    const rawCards = await loadLanguagePack(targetLang);
+    const newCardsRaw = rawCards as any[];
+
     setData((prev) => {
-      const existingKeys = new Set(prev.cards.filter((c) => c.targetLang === prev.profile.targetLang).map((c) => `${c.kind}::${c.front}::${c.back}`));
-      const fresh = seedCardsFromPack(prev.profile.targetLang, prev.profile.level, n * 2).filter((c) => !existingKeys.has(`${c.kind}::${c.front}::${c.back}`));
-      return { ...prev, cards: [...fresh.slice(0, n), ...prev.cards] };
+      // 2. Dubletten-Check: Wir vergleichen IDs, um nichts doppelt zu laden
+      const existingIds = new Set(prev.cards.map((c) => c.id));
+      
+      const initializedCards: Card[] = newCardsRaw
+        .filter((c) => !existingIds.has(c.id))
+        .map((c) => ({
+          ...c,
+          // Wir fügen die Lern-Metadaten hinzu, die nicht im JSON stehen
+          due: Date.now(),
+          intervalDays: 0,
+          ease: 2.5,
+          lapses: 0,
+        }));
+
+      if (initializedCards.length === 0) {
+        alert("Du hast bereits alle verfügbaren Karten für diese Sprache geladen.");
+        return prev;
+      }
+
+      // 3. Neue Karten vorne anfügen
+      return { 
+        ...prev, 
+        cards: [...initializedCards, ...prev.cards] 
+      };
     });
+
+    alert(`${targetLang} Pack erfolgreich synchronisiert!`);
+  } catch (err) {
+    console.error(err);
+    alert("Fehler beim Herunterladen des Packs. Prüfe deine Verbindung.");
+  } finally {
+    setIsDownloading(false);
   }
+}
 
   /** UI */
   return (
@@ -740,10 +691,19 @@ function review(correct: boolean) {
                   <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">Du kannst neue Karten nachlegen (offline Starter-Pack).</div>
                   <div className="mt-4 flex justify-center gap-2">
                     <button
-                      onClick={() => addMoreStarterCards(15)}
-                      className="rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
+                      onClick={downloadAndAddPack}
+                      disabled={isDownloading}
+                      className={`rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-6 py-3 font-bold text-white shadow-lg transition-all active:scale-95 ${
+                        isDownloading ? "opacity-50 cursor-not-allowed" : "hover:opacity-90"
+                      }`}
                     >
-                      ＋ 15 Karten hinzufügen
+                      {isDownloading ? (
+                        <span className="flex items-center gap-2">
+                          <span className="animate-spin">🌀</span> Lade {data.profile.targetLang} Pack...
+                        </span>
+                      ) : (
+                        `📥 Download ${data.profile.targetLang} Pack (GitHub)`
+                      )}
                     </button>
                     <button
                       onClick={() => setView("practice")}
@@ -1078,10 +1038,19 @@ function review(correct: boolean) {
                   <div className="text-sm text-slate-600 dark:text-slate-400">Content</div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
-                      onClick={() => addMoreStarterCards(25)}
-                      className="rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
+                      onClick={downloadAndAddPack}
+                      disabled={isDownloading}
+                      className={`rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-6 py-3 font-bold text-white shadow-lg transition-all active:scale-95 ${
+                        isDownloading ? "opacity-50 cursor-not-allowed" : "hover:opacity-90"
+                      }`}
                     >
-                      ＋ 25 Starter-Karten
+                      {isDownloading ? (
+                        <span className="flex items-center gap-2">
+                          <span className="animate-spin">🌀</span> Lade {data.profile.targetLang} Pack...
+                        </span>
+                      ) : (
+                        `📥 Download ${data.profile.targetLang} Pack (GitHub)`
+                      )}
                     </button>
                     <button
                       onClick={() => {

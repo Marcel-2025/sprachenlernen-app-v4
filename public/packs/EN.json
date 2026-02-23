@@ -1,23 +1,17 @@
 [
-  {
-    "id": "en_test_1",
-    "targetLang": "EN",
-    "kind": "vocab",
-    "front": "Hund",
-    "back": "dog"
-  },
-  {
-    "id": "en_test_2",
-    "targetLang": "EN",
-    "kind": "vocab",
-    "front": "Katze",
-    "back": "cat"
-  },
-  {
-    "id": "en_test_3",
-    "targetLang": "EN",
-    "kind": "sentence",
-    "front": "Der Hund bellt laut.",
-    "back": "The dog barks loudly."
-  }
+  { "id": "en_v1", "targetLang": "EN", "kind": "vocab", "front": "laufen", "back": "to run", "example": "Ich laufe jeden Morgen.", "exampleTranslation": "I run every morning." },
+  { "id": "en_v2", "targetLang": "EN", "kind": "vocab", "front": "essen", "back": "to eat", "example": "Ich esse gern Pasta.", "exampleTranslation": "I like eating pasta." },
+  { "id": "en_v3", "targetLang": "EN", "kind": "vocab", "front": "trinken", "back": "to drink", "example": "Trinkst du Wasser?", "exampleTranslation": "Are you drinking water?" },
+  { "id": "en_v4", "targetLang": "EN", "kind": "vocab", "front": "Zeit", "back": "time", "example": "Ich habe keine Zeit.", "exampleTranslation": "I have no time." },
+  { "id": "en_v5", "targetLang": "EN", "kind": "vocab", "front": "Freund", "back": "friend", "example": "Er ist mein Freund.", "exampleTranslation": "He is my friend." },
+  { "id": "en_v6", "targetLang": "EN", "kind": "vocab", "front": "lernen", "back": "to learn", "example": "Ich lerne Englisch.", "exampleTranslation": "I am learning English." },
+  { "id": "en_v7", "targetLang": "EN", "kind": "vocab", "front": "Arbeit", "back": "work", "example": "Ich gehe zur Arbeit.", "exampleTranslation": "I go to work." },
+  { "id": "en_v8", "targetLang": "EN", "kind": "vocab", "front": "Haus", "back": "house", "example": "Das Haus ist groß.", "exampleTranslation": "The house is big." },
+  { "id": "en_v9", "targetLang": "EN", "kind": "vocab", "front": "Buch", "back": "book", "example": "Das Buch ist interessant.", "exampleTranslation": "The book is interesting." },
+  { "id": "en_v10", "targetLang": "EN", "kind": "vocab", "front": "heute", "back": "today", "example": "Heute ist Montag.", "exampleTranslation": "Today is Monday." },
+  { "id": "en_s1", "targetLang": "EN", "kind": "sentence", "front": "Ich gehe heute nicht zur Arbeit.", "back": "I am not going to work today." },
+  { "id": "en_s2", "targetLang": "EN", "kind": "sentence", "front": "Kannst du mir bitte helfen?", "back": "Can you please help me?" },
+  { "id": "en_s3", "targetLang": "EN", "kind": "sentence", "front": "Wie spät ist es?", "back": "What time is it?" },
+  { "id": "en_s4", "targetLang": "EN", "kind": "sentence", "front": "Ich verstehe das nicht.", "back": "I don't understand that." },
+  { "id": "en_s5", "targetLang": "EN", "kind": "sentence", "front": "Ich möchte einen Kaffee.", "back": "I would like a coffee." }
 ]
