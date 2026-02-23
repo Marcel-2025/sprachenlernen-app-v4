@@ -1,63 +1,75 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
-/** -----------------------------
- * Types
- * ------------------------------ */
+/** ===========================================
+ *  SprachenlernApp – Auto-Language Mode
+ *  Tabs: Heute | Übungen | Profil | Settings
+ *  - User wählt nur Lernsprache (Target)
+ *  - Content wird automatisch aus Starter-Packs gefüllt (offline)
+ *  - SRS + Übungen (nur klicken)
+ *  - Fortschritt/Analytics pro Sprache
+ *  - TTS + Success/Fail Sound + Vibrate
+ * =========================================== */
+
+type View = "today" | "practice" | "profile" | "settings";
+type ThemeMode = "light" | "dark";
+type AppTheme = "ocean" | "sunset" | "lime" | "grape";
+
+type Lang = "EN" | "ES" | "FR" | "RU";
+type Level = "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
 type CardKind = "vocab" | "sentence";
 
 type Card = {
   id: string;
+  targetLang: Lang;
   kind: CardKind;
-  deckId: string;
-
-  // vocab: front=Wort, back=Übersetzung
-  // sentence: front=Satz, back=Übersetzung
-  front: string;
-  back: string;
-
-  // Optional enrichment
-  example?: string; // bei Import als Attribution/Quelle nutzbar
+  front: string; // source/native (DE)
+  back: string;  // target
+  example?: string;
   exampleTranslation?: string;
-  audioUrl?: string;
 
-  // SRS light
-  due: number; // unix ms
+  due: number;
   intervalDays: number;
-  ease: number; // 1.3..2.8
+  ease: number;
   lapses: number;
   lastReviewed?: number;
 };
 
-type Deck = {
+type DailyStat = { reviewed: number; correct: number; wrong: number; minutes: number };
+
+type Profile = {
+  username: string;
+  nativeLang: "DE";
+  targetLang: Lang;
+  level: Level;
+  dailyGoal: number;
+  xp: number;
+  streak: number;
+  bestStreak: number;
+  lastActiveDay: string; // YYYY-MM-DD
+  createdAt: number;
+};
+
+type Achievement = {
   id: string;
-  name: string;
-  fromLang: string;
-  toLang: string;
+  title: string;
+  desc: string;
+  icon: string;
+  unlockedAt?: number;
 };
 
 type AppData = {
-  decks: Deck[];
   cards: Card[];
-  dailyStats: Record<string, { reviewed: number; correct: number; wrong: number }>;
+  profile: Profile;
+  achievements: Achievement[];
+  dailyStatsByLang: Record<Lang, Record<string, DailyStat>>;
 };
 
-type View = "learn" | "practice" | "decks" | "stats" | "settings";
-type ThemeMode = "light" | "dark";
+const STORAGE_KEY = "sprachapp_auto_v1";
+const THEME_KEY = "sprachapp_theme_mode_v1";
+const PALETTE_KEY = "sprachapp_palette_v1";
 
-type AppTheme = "ocean" | "sunset" | "lime" | "grape";
-
-/** -----------------------------
- * Storage keys
- * ------------------------------ */
-const STORAGE_KEY = "lingua_mvp_v3";
-const THEME_KEY = "lingua_theme_mode_v1";
-const PALETTE_KEY = "lingua_palette_v1";
-
-/** -----------------------------
- * Theme classes (defined in globals.css)
- * ------------------------------ */
 const THEME_CLASS: Record<AppTheme, string> = {
   ocean: "theme-ocean",
   sunset: "theme-sunset",
@@ -65,48 +77,136 @@ const THEME_CLASS: Record<AppTheme, string> = {
   grape: "theme-grape",
 };
 
-/** -----------------------------
- * Language map for Tatoeba
- * ------------------------------ */
-const UI_TO_TATOEBA: Record<string, string> = {
-  DE: "deu",
-  EN: "eng",
-  ES: "spa",
-  FR: "fra",
-  RU: "rus",
+const TTS_LANG: Record<Lang | "DE", string> = {
+  DE: "de-DE",
+  EN: "en-US",
+  ES: "es-ES",
+  FR: "fr-FR",
+  RU: "ru-RU",
 };
 
-/** -----------------------------
- * Helpers
- * ------------------------------ */
+/** ---------- Starter Packs (offline) ----------
+ *  Kleines Starter-Pack – wir können später massiv erweitern / Download-Packs bauen.
+ */
+const PACKS: Record<Lang, { vocab: Array<{ de: string; x: string; ex?: string; exTr?: string }>; sentences: Array<{ de: string; x: string }> }> =
+  {
+    EN: {
+      vocab: [
+        { de: "laufen", x: "to run", ex: "Ich laufe jeden Morgen.", exTr: "I run every morning." },
+        { de: "essen", x: "to eat", ex: "Ich esse gern Pasta.", exTr: "I like eating pasta." },
+        { de: "trinken", x: "to drink", ex: "Trinkst du Wasser?", exTr: "Are you drinking water?" },
+        { de: "Zeit", x: "time", ex: "Ich habe keine Zeit.", exTr: "I have no time." },
+        { de: "Freund", x: "friend", ex: "Er ist mein Freund.", exTr: "He is my friend." },
+        { de: "lernen", x: "to learn", ex: "Ich lerne Englisch.", exTr: "I am learning English." },
+        { de: "Arbeit", x: "work", ex: "Ich gehe zur Arbeit.", exTr: "I go to work." },
+        { de: "Haus", x: "house", ex: "Das Haus ist groß.", exTr: "The house is big." },
+        { de: "Buch", x: "book", ex: "Das Buch ist interessant.", exTr: "The book is interesting." },
+        { de: "heute", x: "today", ex: "Heute ist Montag.", exTr: "Today is Monday." },
+      ],
+      sentences: [
+        { de: "Ich gehe heute nicht zur Arbeit.", x: "I am not going to work today." },
+        { de: "Kannst du mir bitte helfen?", x: "Can you please help me?" },
+        { de: "Wie spät ist es?", x: "What time is it?" },
+        { de: "Ich verstehe das nicht.", x: "I don't understand that." },
+        { de: "Ich möchte einen Kaffee.", x: "I would like a coffee." },
+      ],
+    },
+    ES: {
+      vocab: [
+        { de: "Hallo", x: "hola" },
+        { de: "bitte", x: "por favor" },
+        { de: "danke", x: "gracias" },
+        { de: "Wasser", x: "agua" },
+        { de: "essen", x: "comer" },
+        { de: "trinken", x: "beber" },
+        { de: "Haus", x: "casa" },
+        { de: "Freund", x: "amigo" },
+        { de: "Zeit", x: "tiempo" },
+        { de: "heute", x: "hoy" },
+      ],
+      sentences: [
+        { de: "Ich möchte einen Kaffee, bitte.", x: "Quisiera un café, por favor." },
+        { de: "Ich verstehe das nicht.", x: "No entiendo eso." },
+        { de: "Wo ist die Toilette?", x: "¿Dónde está el baño?" },
+        { de: "Kannst du mir helfen?", x: "¿Puedes ayudarme?" },
+        { de: "Wie spät ist es?", x: "¿Qué hora es?" },
+      ],
+    },
+    FR: {
+      vocab: [
+        { de: "Hallo", x: "bonjour" },
+        { de: "bitte", x: "s'il vous plaît" },
+        { de: "danke", x: "merci" },
+        { de: "Wasser", x: "eau" },
+        { de: "essen", x: "manger" },
+        { de: "trinken", x: "boire" },
+        { de: "Haus", x: "maison" },
+        { de: "Freund", x: "ami" },
+        { de: "Zeit", x: "temps" },
+        { de: "heute", x: "aujourd'hui" },
+      ],
+      sentences: [
+        { de: "Ich möchte einen Kaffee, bitte.", x: "Je voudrais un café, s'il vous plaît." },
+        { de: "Ich verstehe das nicht.", x: "Je ne comprends pas." },
+        { de: "Wo ist die Toilette?", x: "Où sont les toilettes ?" },
+        { de: "Kannst du mir helfen?", x: "Peux-tu m'aider ?" },
+        { de: "Wie spät ist es?", x: "Quelle heure est-il ?" },
+      ],
+    },
+    RU: {
+      vocab: [
+        { de: "Hallo", x: "привет" },
+        { de: "bitte", x: "пожалуйста" },
+        { de: "danke", x: "спасибо" },
+        { de: "Wasser", x: "вода" },
+        { de: "essen", x: "есть" },
+        { de: "trinken", x: "пить" },
+        { de: "Haus", x: "дом" },
+        { de: "Freund", x: "друг" },
+        { de: "Zeit", x: "время" },
+        { de: "heute", x: "сегодня" },
+      ],
+      sentences: [
+        { de: "Ich verstehe das nicht.", x: "Я не понимаю." },
+        { de: "Kannst du mir helfen?", x: "Ты можешь мне помочь?" },
+        { de: "Wie spät ist es?", x: "Который час?" },
+        { de: "Ich möchte einen Kaffee, bitte.", x: "Я хотел(а) бы кофе, пожалуйста." },
+        { de: "Wo ist die Toilette?", x: "Где туалет?" },
+      ],
+    },
+  };
+
+/** ---------- Helpers ---------- */
 function uid() {
-  // prefer crypto.randomUUID when available
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const c: any = globalThis.crypto;
   if (c?.randomUUID) return c.randomUUID();
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
-
-function todayKey(d = new Date()) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
 }
-
+function todayKey(d = new Date()) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
 }
-
 function pickRandom<T>(arr: T[]) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
-
 function escapeRegExp(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+function diffDays(a: string, b: string) {
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  const da = new Date(ay, am - 1, ad).getTime();
+  const db = new Date(by, bm - 1, bd).getTime();
+  return Math.round((db - da) / (24 * 60 * 60 * 1000));
+}
 
-/** SRS light algorithm */
+/** ---------- SRS (light) ---------- */
 function schedule(card: Card, correct: boolean): Card {
   const now = Date.now();
   let ease = card.ease;
@@ -122,8 +222,7 @@ function schedule(card: Card, correct: boolean): Card {
     intervalDays = 0;
   }
 
-  // wrong => retry in ~6h
-  const due = now + (correct ? intervalDays : 0.25) * 24 * 60 * 60 * 1000;
+  const due = now + (correct ? intervalDays : 0.25) * 24 * 60 * 60 * 1000; // wrong => retry in ~6h
   return {
     ...card,
     ease,
@@ -134,8 +233,8 @@ function schedule(card: Card, correct: boolean): Card {
   };
 }
 
+/** ---------- Practice helpers (word-choice cloze) ---------- */
 function makeCloze(sentence: string) {
-  // Simple: hide a "good" word (>=4 chars). Falls back to last word.
   const cleanedWords = sentence
     .split(/\s+/)
     .map((w) => w.replace(/[.,!?;:()"„“”“'’]/g, ""))
@@ -143,13 +242,10 @@ function makeCloze(sentence: string) {
 
   const candidates = cleanedWords.filter((w) => w.length >= 4);
   const answer = candidates.length ? pickRandom(candidates) : cleanedWords[cleanedWords.length - 1] ?? "";
-
-  // replace first exact word match
   const re = new RegExp(`\\b${escapeRegExp(answer)}\\b`);
   const cloze = sentence.replace(re, "____");
   return { cloze, answer };
 }
-
 function makeChoices(correct: string, pool: string[], n = 4) {
   const wrongs = pool.filter((x) => x !== correct);
   const picks = new Set<string>([correct]);
@@ -157,561 +253,730 @@ function makeChoices(correct: string, pool: string[], n = 4) {
   return Array.from(picks).sort(() => Math.random() - 0.5);
 }
 
-/** -----------------------------
- * Data load/save
- * ------------------------------ */
+/** ---------- Audio feedback ---------- */
+function playTone(type: "good" | "bad") {
+  if (typeof window === "undefined") return;
+  const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+  if (!AudioCtx) return;
+
+  const ctx = new AudioCtx();
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.type = "sine";
+
+  const now = ctx.currentTime;
+  if (type === "good") {
+    o.frequency.setValueAtTime(784, now);
+    o.frequency.exponentialRampToValueAtTime(1046.5, now + 0.12);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.15, now + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.start(now);
+    o.stop(now + 0.2);
+  } else {
+    o.frequency.setValueAtTime(220, now);
+    o.frequency.exponentialRampToValueAtTime(155, now + 0.18);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.18, now + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.start(now);
+    o.stop(now + 0.24);
+  }
+
+  setTimeout(() => ctx.close().catch(() => {}), 400);
+}
+function vibrate(ms: number) {
+  if (typeof window === "undefined") return;
+  navigator.vibrate?.(ms);
+}
+
+/** ---------- Robust TTS voice picking ---------- */
+function speak(text: string, lang?: string) {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  const synth = window.speechSynthesis;
+  const utter = new SpeechSynthesisUtterance(text);
+  const targetLang = lang || "en-US";
+
+  function pickVoiceAndSpeak() {
+    const voices = synth.getVoices();
+    if (!voices.length) return;
+
+    const primary = targetLang.split("-")[0].toLowerCase();
+    const voice =
+      voices.find((v) => v.lang?.toLowerCase() === targetLang.toLowerCase()) ||
+      voices.find((v) => v.lang?.toLowerCase().startsWith(primary)) ||
+      voices[0];
+
+    if (voice) utter.voice = voice;
+    utter.lang = voice?.lang || targetLang;
+
+    synth.cancel();
+    synth.speak(utter);
+  }
+
+  if (synth.getVoices().length === 0) {
+    synth.onvoiceschanged = pickVoiceAndSpeak;
+  } else {
+    pickVoiceAndSpeak();
+  }
+}
+function stopSpeak() {
+  if (typeof window === "undefined") return;
+  window.speechSynthesis?.cancel();
+}
+
+/** ---------- Gamification ---------- */
+function xpForLevel(level: number) {
+  return Math.round(100 * Math.pow(level, 1.2));
+}
+function computeLevelFromXp(totalXp: number) {
+  let lvl = 1;
+  let xp = totalXp;
+  while (xp >= xpForLevel(lvl) && lvl < 200) {
+    xp -= xpForLevel(lvl);
+    lvl += 1;
+  }
+  const need = xpForLevel(lvl);
+  const progress = need === 0 ? 0 : clamp(xp / need, 0, 1);
+  return { level: lvl, xpIntoLevel: xp, xpNeed: need, progress };
+}
+function addXp(profile: Profile, amount: number) {
+  const newXp = Math.max(0, profile.xp + amount);
+  const { level } = computeLevelFromXp(newXp);
+  return { ...profile, xp: newXp, /* derived */ lastActiveDay: profile.lastActiveDay, streak: profile.streak, bestStreak: profile.bestStreak, level };
+}
+function defaultAchievements(): Achievement[] {
+  return [
+    { id: "first10", title: "Erste Schritte", desc: "Lerne 10 Karten", icon: "✨" },
+    { id: "streak3", title: "Konsequent", desc: "3 Tage Streak", icon: "🔥" },
+    { id: "streak7", title: "Eine Woche", desc: "7 Tage Streak", icon: "🏅" },
+    { id: "review100", title: "Hundert", desc: "Lerne 100 Karten", icon: "💯" },
+    { id: "perfect20day", title: "Sauber!", desc: "20 richtige an einem Tag", icon: "🎯" },
+    { id: "nightowl", title: "Night Owl", desc: "Lerne nach 23:00", icon: "🌙" },
+  ];
+}
+
+/** ---------- Data load/save ---------- */
 function loadData(): AppData {
   const raw = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
   if (raw) return JSON.parse(raw) as AppData;
 
-  const deckId = uid();
   const now = Date.now();
+  const prof: Profile = {
+    username: "Learner",
+    nativeLang: "DE",
+    targetLang: "EN",
+    level: "BEGINNER",
+    dailyGoal: 20,
+    xp: 0,
+    streak: 0,
+    bestStreak: 0,
+    lastActiveDay: todayKey(),
+    createdAt: now,
+  };
+
+  const seed = seedCardsFromPack("EN", "BEGINNER", 30);
 
   return {
-    decks: [{ id: deckId, name: "Deutsch → Englisch", fromLang: "DE", toLang: "EN" }],
-    cards: [
-      {
-        id: uid(),
-        kind: "vocab",
-        deckId,
-        front: "laufen",
-        back: "to run",
-        example: "Ich laufe jeden Morgen.",
-        exampleTranslation: "I run every morning.",
-        due: now,
-        intervalDays: 0,
-        ease: 2.0,
-        lapses: 0,
-      },
-      {
-        id: uid(),
-        kind: "vocab",
-        deckId,
-        front: "der Apfel",
-        back: "the apple",
-        example: "Der Apfel ist rot.",
-        exampleTranslation: "The apple is red.",
-        due: now,
-        intervalDays: 0,
-        ease: 2.0,
-        lapses: 0,
-      },
-      {
-        id: uid(),
-        kind: "sentence",
-        deckId,
-        front: "Ich gehe heute nicht zur Arbeit.",
-        back: "I am not going to work today.",
-        due: now,
-        intervalDays: 0,
-        ease: 2.0,
-        lapses: 0,
-      },
-      {
-        id: uid(),
-        kind: "sentence",
-        deckId,
-        front: "Kannst du mir bitte helfen?",
-        back: "Can you please help me?",
-        due: now,
-        intervalDays: 0,
-        ease: 2.0,
-        lapses: 0,
-      },
-    ],
-    dailyStats: {},
+    cards: seed,
+    profile: prof,
+    achievements: defaultAchievements(),
+    dailyStatsByLang: { EN: {}, ES: {}, FR: {}, RU: {} },
   };
 }
-
 function saveData(data: AppData) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
-/** -----------------------------
- * Main component
- * ------------------------------ */
+/** ---------- Seeding logic (auto content) ---------- */
+function seedCardsFromPack(targetLang: Lang, level: Level, maxCards: number) {
+  const pack = PACKS[targetLang];
+  const now = Date.now();
+
+  // simple level scaling: beginner uses more vocab than sentences; advanced more sentences
+  const vocabRatio = level === "BEGINNER" ? 0.7 : level === "INTERMEDIATE" ? 0.55 : 0.45;
+  const vocabCount = Math.max(5, Math.round(maxCards * vocabRatio));
+  const sentCount = Math.max(3, maxCards - vocabCount);
+
+  const vocabs = pack.vocab.slice(0, vocabCount).map((v) => ({
+    id: uid(),
+    targetLang,
+    kind: "vocab" as const,
+    front: v.de,
+    back: v.x,
+    example: v.ex,
+    exampleTranslation: v.exTr,
+    due: now,
+    intervalDays: 0,
+    ease: 2.0,
+    lapses: 0,
+  }));
+
+  const sents = pack.sentences.slice(0, sentCount).map((s) => ({
+    id: uid(),
+    targetLang,
+    kind: "sentence" as const,
+    front: s.de,
+    back: s.x,
+    due: now,
+    intervalDays: 0,
+    ease: 2.0,
+    lapses: 0,
+  }));
+
+  return [...vocabs, ...sents].slice(0, maxCards);
+}
+
+/** ===========================================
+ * Page
+ * =========================================== */
 export default function Page() {
   const [data, setData] = useState<AppData>(() => loadData());
-  const [view, setView] = useState<View>("learn");
-  const [activeDeckId, setActiveDeckId] = useState<string>(() => loadData().decks[0]?.id ?? "");
-  const [showBack, setShowBack] = useState(false);
-  const [importText, setImportText] = useState("");
+  const [view, setView] = useState<View>("today");
+
   const [mode, setMode] = useState<ThemeMode>("light");
   const [palette, setPalette] = useState<AppTheme>("ocean");
 
-  // Tatoeba import UI
-  const [importing, setImporting] = useState(false);
-  const [importFrom, setImportFrom] = useState("DE");
-  const [importTo, setImportTo] = useState("EN");
-  const [importCount, setImportCount] = useState(50);
-  const [importStatus, setImportStatus] = useState<string>("");
+  const sessionStartRef = useRef<number>(Date.now());
 
-  // init + apply mode (dark class)
+  useEffect(() => saveData(data), [data]);
+
+  /** theme init */
   useEffect(() => {
     const saved = (localStorage.getItem(THEME_KEY) as ThemeMode | null) ?? "light";
     setMode(saved);
     document.documentElement.classList.toggle("dark", saved === "dark");
   }, []);
-
   useEffect(() => {
     localStorage.setItem(THEME_KEY, mode);
     document.documentElement.classList.toggle("dark", mode === "dark");
   }, [mode]);
 
-  // init + apply palette (theme-* classes)
+  /** palette init */
   useEffect(() => {
     const saved = (localStorage.getItem(PALETTE_KEY) as AppTheme | null) ?? "ocean";
     setPalette(saved);
   }, []);
-
   useEffect(() => {
     localStorage.setItem(PALETTE_KEY, palette);
-    // remove all theme classes first
     Object.values(THEME_CLASS).forEach((cls) => document.documentElement.classList.remove(cls));
     document.documentElement.classList.add(THEME_CLASS[palette]);
   }, [palette]);
 
-  useEffect(() => saveData(data), [data]);
-
+  /** streak day rollover */
   useEffect(() => {
-    if (!data.decks.find((d) => d.id === activeDeckId) && data.decks[0]) {
-      setActiveDeckId(data.decks[0].id);
-    }
-  }, [data.decks, activeDeckId]);
+    const today = todayKey();
+    setData((prev) => {
+      const p = prev.profile;
+      const delta = diffDays(p.lastActiveDay, today);
+      if (delta <= 0) return prev;
+      // if missed days => reset streak (we keep it simple)
+      if (delta >= 2) return { ...prev, profile: { ...p, streak: 0, lastActiveDay: today } };
+      return { ...prev, profile: { ...p, lastActiveDay: today } };
+    });
+  }, []);
 
-  const activeDeck = useMemo(() => data.decks.find((d) => d.id === activeDeckId), [data.decks, activeDeckId]);
+  const target = data.profile.targetLang;
+
+  /** ensure we always have some cards for selected language */
+  useEffect(() => {
+    const has = data.cards.some((c) => c.targetLang === target);
+    if (has) return;
+
+    setData((prev) => ({
+      ...prev,
+      cards: [...seedCardsFromPack(prev.profile.targetLang, prev.profile.level, 30), ...prev.cards],
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+
+  const allCardsForLang = useMemo(() => data.cards.filter((c) => c.targetLang === target), [data.cards, target]);
 
   const dueCards = useMemo(() => {
     const now = Date.now();
-    return data.cards
-      .filter((c) => c.deckId === activeDeckId && c.due <= now)
-      .sort((a, b) => a.due - b.due);
-  }, [data.cards, activeDeckId]);
+    return allCardsForLang.filter((c) => c.due <= now).sort((a, b) => a.due - b.due);
+  }, [allCardsForLang]);
 
   const nextCard = dueCards[0];
 
-  const statsToday = useMemo(() => {
-    const key = todayKey();
-    return data.dailyStats[key] ?? { reviewed: 0, correct: 0, wrong: 0 };
-  }, [data.dailyStats]);
+  const todayStat = useMemo(() => {
+    const k = todayKey();
+    return data.dailyStatsByLang[target]?.[k] ?? { reviewed: 0, correct: 0, wrong: 0, minutes: 0 };
+  }, [data.dailyStatsByLang, target]);
+
+  function addMinutesSinceLastTick() {
+    const now = Date.now();
+    const elapsed = now - sessionStartRef.current;
+    if (elapsed < 30_000) return 0;
+    const minutes = Math.floor(elapsed / 60_000);
+    if (minutes <= 0) return 0;
+    sessionStartRef.current = now;
+    return minutes;
+  }
 
   function bumpStats(correct: boolean) {
-    const key = todayKey();
+    const k = todayKey();
+    const addMin = addMinutesSinceLastTick();
+
     setData((prev) => {
-      const cur = prev.dailyStats[key] ?? { reviewed: 0, correct: 0, wrong: 0 };
-      return {
-        ...prev,
-        dailyStats: {
-          ...prev.dailyStats,
-          [key]: {
-            reviewed: cur.reviewed + 1,
-            correct: cur.correct + (correct ? 1 : 0),
-            wrong: cur.wrong + (correct ? 0 : 1),
-          },
-        },
+      const byLang = { ...prev.dailyStatsByLang };
+      const langMap = { ...(byLang[target] ?? {}) };
+      const cur = langMap[k] ?? { reviewed: 0, correct: 0, wrong: 0, minutes: 0 };
+      langMap[k] = {
+        reviewed: cur.reviewed + 1,
+        correct: cur.correct + (correct ? 1 : 0),
+        wrong: cur.wrong + (correct ? 0 : 1),
+        minutes: cur.minutes + addMin,
       };
+      byLang[target] = langMap;
+      return { ...prev, dailyStatsByLang: byLang };
     });
   }
 
-  function review(correct: boolean) {
-    if (!nextCard) return;
-    setShowBack(false);
-    bumpStats(correct);
-    setData((prev) => ({
+  function updateStreakIfGoalMet(nextReviewed: number) {
+    const today = todayKey();
+    setData((prev) => {
+      const p = prev.profile;
+      if (nextReviewed < p.dailyGoal) return prev;
+
+      // if already "counted today", no extra action
+      if (p.lastActiveDay === today && p.streak > 0) {
+        return { ...prev, profile: { ...p, bestStreak: Math.max(p.bestStreak, p.streak), lastActiveDay: today } };
+      }
+
+      const delta = diffDays(p.lastActiveDay, today);
+      let streak = p.streak;
+      if (delta === 0) streak = p.streak;
+      else if (delta === 1) streak = p.streak + 1;
+      else streak = 1;
+
+      return { ...prev, profile: { ...p, streak, bestStreak: Math.max(p.bestStreak, streak), lastActiveDay: today } };
+    });
+  }
+
+  function unlockAchievement(id: string) {
+    setData((prev) => {
+      const idx = prev.achievements.findIndex((a) => a.id === id);
+      if (idx < 0) return prev;
+      if (prev.achievements[idx].unlockedAt) return prev;
+      const updated = [...prev.achievements];
+      updated[idx] = { ...updated[idx], unlockedAt: Date.now() };
+      return { ...prev, achievements: updated };
+    });
+  }
+
+  function evaluateAchievements() {
+    const k = todayKey();
+    const t = data.dailyStatsByLang[target]?.[k] ?? { reviewed: 0, correct: 0, wrong: 0, minutes: 0 };
+
+    const totalReviewedAllLang = (Object.values(data.dailyStatsByLang) as any[]).flatMap((m) => Object.values(m)).reduce((s: number, d: any) => s + (d.reviewed || 0), 0);
+
+    if (totalReviewedAllLang >= 10) unlockAchievement("first10");
+    if (totalReviewedAllLang >= 100) unlockAchievement("review100");
+    if (data.profile.streak >= 3) unlockAchievement("streak3");
+    if (data.profile.streak >= 7) unlockAchievement("streak7");
+    if (t.correct >= 20) unlockAchievement("perfect20day");
+    if (new Date().getHours() >= 23) unlockAchievement("nightowl");
+  }
+
+  useEffect(() => {
+    evaluateAchievements();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.dailyStatsByLang, data.profile.streak, data.profile.targetLang]);
+
+  /** learned definitions */
+  const learnedThreshold = 3; // days
+  const masteredThreshold = 7;
+
+  const learned = useMemo(() => {
+    const vocabLearned = allCardsForLang.filter((c) => c.kind === "vocab" && c.intervalDays >= learnedThreshold).length;
+    const vocabMastered = allCardsForLang.filter((c) => c.kind === "vocab" && c.intervalDays >= masteredThreshold).length;
+    const sentLearned = allCardsForLang.filter((c) => c.kind === "sentence" && c.intervalDays >= learnedThreshold).length;
+    const total = allCardsForLang.length || 1;
+    const learnedTotal = vocabLearned + sentLearned;
+    return { vocabLearned, vocabMastered, sentLearned, learnedTotal, total, progress: clamp(learnedTotal / total, 0, 1) };
+  }, [allCardsForLang]);
+
+  const goalProgress = clamp(todayStat.reviewed / Math.max(1, data.profile.dailyGoal), 0, 1);
+  const goalMet = todayStat.reviewed >= data.profile.dailyGoal;
+
+  const levelInfo = useMemo(() => computeLevelFromXp(data.profile.xp), [data.profile.xp]);
+
+  const last14 = useMemo(() => {
+    const days: { day: string; s: DailyStat }[] = [];
+    const base = new Date();
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(base);
+      d.setDate(d.getDate() - i);
+      const key = todayKey(d);
+      const s = data.dailyStatsByLang[target]?.[key] ?? { reviewed: 0, correct: 0, wrong: 0, minutes: 0 };
+      days.push({ day: key, s });
+    }
+    return days;
+  }, [data.dailyStatsByLang, target]);
+
+  const totalsLang = useMemo(() => {
+    const all = Object.values(data.dailyStatsByLang[target] ?? {});
+    const reviewed = all.reduce((a, x) => a + (x.reviewed || 0), 0);
+    const correct = all.reduce((a, x) => a + (x.correct || 0), 0);
+    const wrong = all.reduce((a, x) => a + (x.wrong || 0), 0);
+    const minutes = all.reduce((a, x) => a + (x.minutes || 0), 0);
+    const acc = reviewed ? Math.round((correct / reviewed) * 100) : 0;
+    return { reviewed, correct, wrong, minutes, acc };
+  }, [data.dailyStatsByLang, target]);
+
+  /** main review */
+function review(correct: boolean) {
+  if (!nextCard) return;
+
+  playTone(correct ? "good" : "bad");
+  vibrate(correct ? 20 : 60);
+
+  // Stats in der Datenbank/API (falls synchron)
+  bumpStats(correct);
+
+  setData((prev) => {
+    // 1. XP für die aktuelle Antwort berechnen
+    let updatedProfile = addXp(prev.profile, correct ? 10 : 3) as unknown as Profile;
+    
+    // 2. Karten-Status (Scheduling) aktualisieren
+    const updatedCards = prev.cards.map((c) =>
+      c.id === nextCard.id ? schedule(c, correct) : c
+    );
+
+    // 3. Session-Bonus prüfen (alle 20 Karten)
+    const nextReviewed = (todayStat.reviewed || 0) + 1;
+    if (nextReviewed > 0 && nextReviewed % 20 === 0) {
+      updatedProfile = addXp(updatedProfile, 20) as unknown as Profile;
+    }
+
+    // Alles in einem Rutsch zurückgeben
+    return {
       ...prev,
-      cards: prev.cards.map((c) => (c.id === nextCard.id ? schedule(c, correct) : c)),
-    }));
+      profile: updatedProfile,
+      cards: updatedCards,
+    } as AppData;
+  });
+
+  // Streak-Logik außerhalb des Setters (da sie meist Seiteneffekte hat)
+  updateStreakIfGoalMet(todayStat.reviewed + 1);
+}
+
+  function addMoreStarterCards(n: number) {
+    setData((prev) => {
+      const existingKeys = new Set(prev.cards.filter((c) => c.targetLang === prev.profile.targetLang).map((c) => `${c.kind}::${c.front}::${c.back}`));
+      const fresh = seedCardsFromPack(prev.profile.targetLang, prev.profile.level, n * 2).filter((c) => !existingKeys.has(`${c.kind}::${c.front}::${c.back}`));
+      return { ...prev, cards: [...fresh.slice(0, n), ...prev.cards] };
+    });
   }
 
-  function addDeck() {
-    const name = prompt("Name des Decks (z.B. Spanisch → Deutsch):");
-    if (!name) return;
-    const fromLang = prompt("Quellsprache (z.B. ES):", "ES") ?? "ES";
-    const toLang = prompt("Zielsprache (z.B. DE):", "DE") ?? "DE";
-    const d: Deck = { id: uid(), name, fromLang, toLang };
-    setData((prev) => ({ ...prev, decks: [d, ...prev.decks] }));
-    setActiveDeckId(d.id);
-    setView("decks");
-  }
-
-  function deleteDeck(deckId: string) {
-    if (!confirm("Deck wirklich löschen? Alle Karten darin werden ebenfalls gelöscht.")) return;
-    setData((prev) => ({
-      ...prev,
-      decks: prev.decks.filter((d) => d.id !== deckId),
-      cards: prev.cards.filter((c) => c.deckId !== deckId),
-    }));
-  }
-
-  function addCard(deckId: string, kind: CardKind) {
-    const front = kind === "vocab" ? prompt("Vokabel (Front):") : prompt("Satz (Front):");
-    if (!front) return;
-
-    const back = prompt("Übersetzung (Back):");
-    if (!back) return;
-
-    let example = "";
-    let exampleTranslation = "";
-    if (kind === "vocab") {
-      example = (prompt("Beispiel-Satz (optional):") ?? "").trim();
-      exampleTranslation = (prompt("Übersetzung des Beispiels (optional):") ?? "").trim();
-    }
-
-    const audioUrl = (prompt("Audio-URL (optional):") ?? "").trim();
-
-    const c: Card = {
-      id: uid(),
-      kind,
-      deckId,
-      front,
-      back,
-      example: example || undefined,
-      exampleTranslation: exampleTranslation || undefined,
-      audioUrl: audioUrl || undefined,
-      due: Date.now(),
-      intervalDays: 0,
-      ease: 2.0,
-      lapses: 0,
-    };
-
-    setData((prev) => ({ ...prev, cards: [c, ...prev.cards] }));
-  }
-
-  function deleteCard(cardId: string) {
-    if (!confirm("Karte wirklich löschen?")) return;
-    setData((prev) => ({ ...prev, cards: prev.cards.filter((c) => c.id !== cardId) }));
-  }
-
-  function exportJSON() {
-    const payload = JSON.stringify(data, null, 2);
-    navigator.clipboard.writeText(payload).catch(() => {});
-    alert("Export in die Zwischenablage kopiert (JSON).");
-  }
-
-  function importJSON() {
-    try {
-      const parsed = JSON.parse(importText);
-      if (!parsed?.decks || !parsed?.cards) throw new Error("Ungültiges Format.");
-      setData(parsed);
-      setImportText("");
-      alert("Import erfolgreich.");
-    } catch (e: any) {
-      alert("Import fehlgeschlagen: " + (e?.message ?? "Unbekannter Fehler"));
-    }
-  }
-
-  function resetAll() {
-    if (!confirm("Alles zurücksetzen?")) return;
-    const fresh = loadData();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
-    setData(fresh);
-    setActiveDeckId(fresh.decks[0]?.id ?? "");
-    setView("learn");
-  }
-
-  async function importFromTatoeba() {
-    try {
-      if (!activeDeckId) throw new Error("Kein aktives Deck.");
-      if (importFrom === importTo) throw new Error("Von/Zu dürfen nicht identisch sein.");
-
-      setImporting(true);
-      setImportStatus("Lade…");
-
-      const from = UI_TO_TATOEBA[importFrom] ?? "deu";
-      const to = UI_TO_TATOEBA[importTo] ?? "eng";
-      const limit = Math.min(Math.max(importCount, 10), 200);
-
-      const res = await fetch(`/api/tatoeba?from=${from}&to=${to}&limit=${limit}`);
-      const json = await res.json();
-      if (!res.ok || json?.error) throw new Error(json?.error || "Import fehlgeschlagen");
-
-      // expected: json.data[] from tatoeba unstable endpoint
-      const items: any[] = json?.data ?? [];
-
-      const now = Date.now();
-      const newCards: Card[] = items
-        .map((s) => {
-          const srcText = s?.text;
-          // translations can be nested; we try to pick matching lang
-          const transArr = Array.isArray(s?.translations) ? s.translations : [];
-          const trans =
-            transArr.find((tr: any) => tr?.lang === to) ??
-            transArr.find((tr: any) => tr?.text) ??
-            null;
-
-          const trgText = trans?.text;
-          const author = s?.owner?.username || s?.owner || "unknown";
-          const sid = s?.id;
-
-          if (!srcText || !trgText) return null;
-
-          const card: Card = {
-            id: uid(),
-            kind: "sentence",
-            deckId: activeDeckId,
-            front: String(srcText),
-            back: String(trgText),
-            due: now,
-            intervalDays: 0,
-            ease: 2.0,
-            lapses: 0,
-            // minimal attribution note (CC BY: author + source)
-            example: `Quelle: Tatoeba · Autor: ${author} · ID: ${sid}`,
-          };
-          return card;
-        })
-        .filter(Boolean) as Card[];
-
-      // dedupe by (deckId, kind, front, back)
-      setData((prev) => {
-        const existing = new Set(prev.cards.map((c) => `${c.deckId}::${c.kind}::${c.front}::${c.back}`));
-        const filtered = newCards.filter((c) => !existing.has(`${c.deckId}::${c.kind}::${c.front}::${c.back}`));
-        const added = filtered.length;
-
-        setImportStatus(`✅ Importiert: ${added} (Duplikate ignoriert)`);
-        return { ...prev, cards: [...filtered, ...prev.cards] };
-      });
-    } catch (e: any) {
-      setImportStatus(`❌ ${e?.message ?? "Fehler"}`);
-    } finally {
-      setImporting(false);
-    }
-  }
-
+  /** UI */
   return (
     <div className="min-h-screen bg-gradient-to-b from-[var(--bg1)] via-[var(--bg2)] to-[var(--bg3)] text-slate-900 dark:text-slate-50">
       <div className="mx-auto max-w-5xl px-4 pb-24 pt-6">
         <Header
           view={view}
           setView={setView}
-          activeDeck={activeDeck}
-          dueCount={dueCards.length}
           mode={mode}
           toggleMode={() => setMode((t) => (t === "dark" ? "light" : "dark"))}
+          level={data.profile.level}
+          xp={data.profile.xp}
+          targetLang={target}
+          streak={data.profile.streak}
         />
 
-        {view === "learn" && (
+        {view === "today" && (
           <div className="mt-6 grid gap-4">
             <CardShell>
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm text-slate-500 dark:text-slate-400">Aktives Deck</div>
-                  <div className="text-lg font-semibold">{activeDeck?.name ?? "—"}</div>
+                  <div className="text-sm text-slate-500 dark:text-slate-400">Lernsprache</div>
+                  <div className="text-lg font-semibold">Deutsch → {target}</div>
+                  <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                    <b className="text-slate-900 dark:text-slate-100">{dueCards.length}</b> fällig ·{" "}
+                    <b className="text-slate-900 dark:text-slate-100">{todayStat.reviewed}</b> heute ·{" "}
+                    <b className="text-slate-900 dark:text-slate-100">{data.profile.streak}</b>🔥 Streak
+                  </div>
                 </div>
-                <Pill>{dueCards.length} fällig</Pill>
+                <Pill>{goalMet ? "✅ Ziel" : `${data.profile.dailyGoal} / Tag`}</Pill>
+              </div>
+
+              <div className="mt-4">
+                <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+                  <span>Tagesziel</span>
+                  <span>
+                    {todayStat.reviewed}/{data.profile.dailyGoal}
+                  </span>
+                </div>
+                <div className="mt-2 h-3 w-full rounded-full bg-white/60 dark:bg-slate-900/50">
+                  <div className="h-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500" style={{ width: `${Math.round(goalProgress * 100)}%` }} />
+                </div>
+
+                <div className="mt-4">
+                  <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+                    <span>Sprach-Fortschritt (gelernt)</span>
+                    <span>
+                      {learned.learnedTotal}/{learned.total}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-3 w-full rounded-full bg-white/60 dark:bg-slate-900/50">
+                    <div className="h-3 rounded-full bg-gradient-to-r from-sky-500 to-indigo-500" style={{ width: `${Math.round(learned.progress * 100)}%` }} />
+                  </div>
+                  <div className="mt-2 text-sm text-slate-700 dark:text-slate-200">
+                    Gelernte Wörter: <b>{learned.vocabLearned}</b> (Mastered: <b>{learned.vocabMastered}</b>) · Gelernte Sätze: <b>{learned.sentLearned}</b>
+                  </div>
+                </div>
               </div>
             </CardShell>
 
             <CardShell>
               {!nextCard ? (
-                <EmptyState />
+                <div className="rounded-2xl border border-slate-200 bg-white/70 p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-950/60">
+                  <div className="text-xl font-semibold">Keine fälligen Karten 🎉</div>
+                  <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">Du kannst neue Karten nachlegen (offline Starter-Pack).</div>
+                  <div className="mt-4 flex justify-center gap-2">
+                    <button
+                      onClick={() => addMoreStarterCards(15)}
+                      className="rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
+                    >
+                      ＋ 15 Karten hinzufügen
+                    </button>
+                    <button
+                      onClick={() => setView("practice")}
+                      className="rounded-2xl border border-slate-200 bg-white px-4 py-2 font-semibold shadow-sm hover:shadow dark:border-slate-800 dark:bg-slate-950"
+                    >
+                      Übungen →
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <>
                   <div className="flex items-start justify-between gap-3">
                     <div className="text-sm text-slate-500 dark:text-slate-400">
-                      Karte ·{" "}
-                      <b className="text-slate-900 dark:text-slate-100">
-                        {nextCard.kind === "vocab" ? "Vokabel" : "Satz"}
-                      </b>
+                      Karte · <b className="text-slate-900 dark:text-slate-100">{nextCard.kind === "vocab" ? "Vokabel" : "Satz"}</b>
                     </div>
-                    <button
-                      className="rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-3 py-1 text-sm font-semibold text-white shadow hover:opacity-90"
-                      onClick={() => {
-                        if (nextCard.audioUrl) new Audio(nextCard.audioUrl).play();
-                        else alert("Kein Audio hinterlegt.");
-                      }}
-                    >
-                      🔊 Audio
-                    </button>
+
+                    <div className="flex gap-2">
+                      <button
+                        className="rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-3 py-1 text-sm font-semibold text-white shadow hover:opacity-90"
+                        onClick={() => speak(nextCard.front, TTS_LANG.DE)}
+                        title="DE vorlesen"
+                      >
+                        🔊 DE
+                      </button>
+                      <button
+                        className="rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 px-3 py-1 text-sm font-semibold text-white shadow hover:opacity-90"
+                        onClick={() => speak(nextCard.back, TTS_LANG[target])}
+                        title={`${target} vorlesen`}
+                      >
+                        🔊 {target}
+                      </button>
+                      <button
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1 text-sm font-semibold shadow-sm hover:shadow dark:border-slate-800 dark:bg-slate-950"
+                        onClick={stopSpeak}
+                        title="Stop"
+                      >
+                        ⏹
+                      </button>
+                    </div>
                   </div>
 
-                  <button
-                    onClick={() => setShowBack((s) => !s)}
-                    className="mt-4 w-full rounded-2xl border border-slate-200 bg-[var(--cardSolid)] px-4 py-10 text-center text-xl font-semibold shadow-sm hover:shadow md:text-2xl dark:border-slate-800"
-                  >
-                    <span className="bg-gradient-to-r from-sky-600 via-indigo-600 to-fuchsia-600 bg-clip-text text-transparent dark:from-sky-300 dark:via-indigo-300 dark:to-fuchsia-300">
-                      {showBack ? nextCard.back : nextCard.front}
-                    </span>
-                    <div className="mt-2 text-sm font-normal text-slate-500 dark:text-slate-400">Tippe zum Umdrehen</div>
-                  </button>
-
-                  {nextCard.kind === "vocab" && (nextCard.example || nextCard.exampleTranslation) && (
-                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white/60 p-4 dark:border-slate-800 dark:bg-slate-900/50">
-                      {nextCard.example && <div className="font-semibold">{nextCard.example}</div>}
-                      {nextCard.exampleTranslation && (
-                        <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">{nextCard.exampleTranslation}</div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <div className="rounded-2xl border border-slate-200 bg-[var(--cardSolid)] p-5 shadow-sm dark:border-slate-800">
+                      <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Deutsch</div>
+                      <div className="mt-2 text-2xl font-black">{nextCard.front}</div>
+                      {nextCard.example && (
+                        <div className="mt-3 rounded-2xl border border-slate-200 bg-white/60 p-4 text-sm dark:border-slate-800 dark:bg-slate-950/60">
+                          <div className="font-semibold">{nextCard.example}</div>
+                          {nextCard.exampleTranslation && <div className="mt-1 text-slate-600 dark:text-slate-300">{nextCard.exampleTranslation}</div>}
+                        </div>
                       )}
                     </div>
-                  )}
 
-                  {nextCard.kind === "sentence" && nextCard.example && (
-                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white/60 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-200">
-                      {nextCard.example}
+                    <div className="rounded-2xl border border-slate-200 bg-[var(--cardSolid)] p-5 shadow-sm dark:border-slate-800">
+                      <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">{target}</div>
+                      <div className="mt-2 text-2xl font-black bg-gradient-to-r from-sky-600 to-fuchsia-600 bg-clip-text text-transparent dark:from-sky-300 dark:to-fuchsia-300">
+                        {nextCard.back}
+                      </div>
+                      <div className="mt-3 text-sm text-slate-600 dark:text-slate-400">
+                        Intervall: <b className="text-slate-900 dark:text-slate-100">{nextCard.intervalDays}d</b> · Ease:{" "}
+                        <b className="text-slate-900 dark:text-slate-100">{nextCard.ease.toFixed(2)}</b>
+                      </div>
                     </div>
-                  )}
+                  </div>
 
                   <div className="mt-4 grid grid-cols-2 gap-3">
                     <FancyBtn variant="bad" onClick={() => review(false)} label="✖ Nicht gewusst" />
                     <FancyBtn variant="good" onClick={() => review(true)} label="✔ Gewusst" />
-                  </div>
-
-                  <div className="mt-4 text-sm text-slate-600 dark:text-slate-400">
-                    Intervall:{" "}
-                    <b className="text-slate-900 dark:text-slate-100">{nextCard.intervalDays}d</b> · Ease:{" "}
-                    <b className="text-slate-900 dark:text-slate-100">{nextCard.ease.toFixed(2)}</b> · Lapses:{" "}
-                    <b className="text-slate-900 dark:text-slate-100">{nextCard.lapses}</b>
                   </div>
                 </>
               )}
             </CardShell>
 
             <CardShell>
-              <div className="text-sm text-slate-500 dark:text-slate-400">Heute</div>
-              <div className="mt-2 grid grid-cols-3 gap-3">
-                <Stat label="Gelernt" value={statsToday.reviewed} />
-                <Stat label="Richtig" value={statsToday.correct} />
-                <Stat label="Falsch" value={statsToday.wrong} />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm text-slate-500 dark:text-slate-400">Heute ({target})</div>
+                  <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                    Accuracy: <b className="text-slate-900 dark:text-slate-100">{todayStat.reviewed ? Math.round((todayStat.correct / todayStat.reviewed) * 100) : 0}%</b> · Minuten:{" "}
+                    <b className="text-slate-900 dark:text-slate-100">{todayStat.minutes}</b>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-white/60 px-4 py-2 text-sm font-semibold dark:border-slate-800 dark:bg-slate-950/60">
+                  Level <span className="font-black">{computeLevelFromXp(data.profile.xp).level}</span>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+                  <span>XP</span>
+                  <span>
+                    {levelInfo.xpIntoLevel}/{levelInfo.xpNeed}
+                  </span>
+                </div>
+                <div className="mt-2 h-3 w-full rounded-full bg-white/60 dark:bg-slate-900/50">
+                  <div className="h-3 rounded-full bg-gradient-to-r from-sky-500 to-indigo-500" style={{ width: `${Math.round(levelInfo.progress * 100)}%` }} />
+                </div>
               </div>
             </CardShell>
           </div>
         )}
 
-        {view === "practice" && (
-          <Practice
-            cards={data.cards.filter((c) => c.deckId === activeDeckId)}
-            onCorrect={() => bumpStats(true)}
-            onWrong={() => bumpStats(false)}
-          />
-        )}
+{view === "practice" && (
+  <Practice
+    targetLang={target}
+    nativeLang="DE"
+    cards={allCardsForLang}
+    onCorrect={() => {
+      playTone("good");
+      vibrate(20);
+      bumpStats(true);
+      // Fix: Gesamtes Objekt als AppData casten, um den Level-Typen-Fehler zu umgehen
+      setData((prev) => ({ 
+        ...prev, 
+        profile: addXp(prev.profile, 6) as unknown as Profile 
+      } as AppData));
+      updateStreakIfGoalMet(todayStat.reviewed + 1);
+    }}
+    onWrong={() => {
+      playTone("bad");
+      vibrate(60);
+      bumpStats(false);
+      // Fix: Auch hier den Double Cast anwenden
+      setData((prev) => ({ 
+        ...prev, 
+        profile: addXp(prev.profile, 2) as unknown as Profile 
+      } as AppData));
+      updateStreakIfGoalMet(todayStat.reviewed + 1);
+    }}
+  />
+)}
 
-        {view === "decks" && (
+        {view === "profile" && (
           <div className="mt-6 grid gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-semibold">Decks & Karten</h2>
-              <button
-                onClick={addDeck}
-                className="rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
-              >
-                ＋ Neues Deck
-              </button>
-            </div>
+            <h2 className="text-xl font-semibold">Profil & Fortschritt ({target})</h2>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              {data.decks.map((d) => {
-                const count = data.cards.filter((c) => c.deckId === d.id).length;
-                const due = data.cards.filter((c) => c.deckId === d.id && c.due <= Date.now()).length;
-                const vocabCount = data.cards.filter((c) => c.deckId === d.id && c.kind === "vocab").length;
-                const sentCount = data.cards.filter((c) => c.deckId === d.id && c.kind === "sentence").length;
-                const active = d.id === activeDeckId;
-
-                return (
-                  <div
-                    key={d.id}
-                    className={`rounded-2xl border p-5 shadow-sm ${
-                      active
-                        ? "border-indigo-200 bg-[var(--card)] dark:border-indigo-900"
-                        : "border-slate-200 bg-[var(--card)] dark:border-slate-800"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-lg font-semibold">{d.name}</div>
-                        <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                          {d.fromLang} → {d.toLang} · {count} Karten ·{" "}
-                          <b className="text-slate-900 dark:text-slate-100">{due}</b> fällig
-                        </div>
-                        <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                          Vokabeln: {vocabCount} · Sätze: {sentCount}
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => {
-                            setActiveDeckId(d.id);
-                            setView("learn");
-                          }}
-                          className="rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-3 py-1 text-sm font-semibold text-white shadow hover:opacity-90"
-                        >
-                          Lernen
-                        </button>
-                        <button
-                          onClick={() => deleteDeck(d.id)}
-                          className="rounded-xl bg-gradient-to-r from-rose-500 to-orange-500 px-3 py-1 text-sm font-semibold text-white shadow hover:opacity-90"
-                        >
-                          Löschen
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button
-                        onClick={() => addCard(d.id, "vocab")}
-                        className="rounded-2xl bg-gradient-to-r from-fuchsia-500 to-pink-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
-                      >
-                        ＋ Vokabel
-                      </button>
-                      <button
-                        onClick={() => addCard(d.id, "sentence")}
-                        className="rounded-2xl bg-gradient-to-r from-indigo-500 to-sky-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
-                      >
-                        ＋ Satz
-                      </button>
-                    </div>
-
-                    <div className="mt-4 max-h-72 overflow-auto rounded-2xl border border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-950/60">
-                      {data.cards.filter((c) => c.deckId === d.id).length === 0 ? (
-                        <div className="p-4 text-sm text-slate-500 dark:text-slate-400">Noch keine Karten.</div>
-                      ) : (
-                        <ul className="divide-y divide-slate-200 dark:divide-slate-800">
-                          {data.cards
-                            .filter((c) => c.deckId === d.id)
-                            .slice(0, 60)
-                            .map((c) => (
-                              <li key={c.id} className="flex items-start justify-between gap-3 p-4">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span
-                                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                        c.kind === "vocab"
-                                          ? "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/40 dark:text-fuchsia-200"
-                                          : "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-200"
-                                      }`}
-                                    >
-                                      {c.kind === "vocab" ? "Vokabel" : "Satz"}
-                                    </span>
-                                    <div className="truncate font-semibold">{c.front}</div>
-                                  </div>
-                                  <div className="truncate text-sm text-slate-500 dark:text-slate-400">{c.back}</div>
-                                </div>
-
-                                <button
-                                  onClick={() => deleteCard(c.id)}
-                                  className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-1 text-sm hover:shadow dark:border-slate-800 dark:bg-slate-950"
-                                >
-                                  Entfernen
-                                </button>
-                              </li>
-                            ))}
-                        </ul>
-                      )}
-                    </div>
-
-                    <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                      Hinweis: Liste zeigt max. 60 Karten (MVP).
+            <CardShell>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-r from-sky-500 to-fuchsia-500 font-black text-white shadow">
+                    {data.profile.username.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="text-lg font-semibold">{data.profile.username}</div>
+                    <div className="text-sm text-slate-600 dark:text-slate-400">
+                      Deutsch → {target} · Level <b className="text-slate-900 dark:text-slate-100">{computeLevelFromXp(data.profile.xp).level}</b> ·{" "}
+                      <b className="text-slate-900 dark:text-slate-100">{data.profile.xp}</b> XP
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+                </div>
 
-        {view === "stats" && (
-          <div className="mt-6 grid gap-4">
-            <h2 className="text-xl font-semibold">Statistik</h2>
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 font-semibold shadow-sm hover:shadow dark:border-slate-800 dark:bg-slate-950"
+                  onClick={() => {
+                    const name = prompt("Username ändern:", data.profile.username);
+                    if (!name) return;
+                    setData((prev) => ({ ...prev, profile: { ...prev.profile, username: name } }));
+                  }}
+                >
+                  ✏️ Name
+                </button>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+                <Stat label="Streak" value={data.profile.streak} suffix="🔥" />
+                <Stat label="Best" value={data.profile.bestStreak} suffix="🏆" />
+                <Stat label="Acc" value={totalsLang.acc} suffix="%" />
+                <Stat label="Minuten" value={totalsLang.minutes} />
+              </div>
+
+              <div className="mt-4">
+                <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400">
+                  <span>Sprach-Fortschritt</span>
+                  <span>{Math.round(learned.progress * 100)}%</span>
+                </div>
+                <div className="mt-2 h-3 w-full rounded-full bg-white/60 dark:bg-slate-900/50">
+                  <div className="h-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500" style={{ width: `${Math.round(learned.progress * 100)}%` }} />
+                </div>
+                <div className="mt-2 text-sm text-slate-700 dark:text-slate-200">
+                  Gelernte Wörter: <b>{learned.vocabLearned}</b> (Mastered: <b>{learned.vocabMastered}</b>) · Gelernte Sätze: <b>{learned.sentLearned}</b>
+                </div>
+              </div>
+            </CardShell>
+
             <CardShell>
-              <div className="text-sm text-slate-500 dark:text-slate-400">Letzte Tage</div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-lg font-semibold">Achievements</div>
+                  <div className="text-sm text-slate-600 dark:text-slate-400">
+                    Freigeschaltet: <b className="text-slate-900 dark:text-slate-100">{data.achievements.filter((a) => a.unlockedAt).length}</b> / {data.achievements.length}
+                  </div>
+                </div>
+                <button
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2 font-semibold shadow-sm hover:shadow dark:border-slate-800 dark:bg-slate-950"
+                  onClick={() => evaluateAchievements()}
+                >
+                  🔍 prüfen
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {data.achievements.map((a) => (
+                  <div
+                    key={a.id}
+                    className={`rounded-2xl border p-4 shadow-sm ${
+                      a.unlockedAt
+                        ? "border-emerald-200 bg-white/70 dark:border-emerald-900 dark:bg-slate-950/60"
+                        : "border-slate-200 bg-white/50 opacity-80 dark:border-slate-800 dark:bg-slate-950/40"
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="grid h-10 w-10 place-items-center rounded-2xl bg-gradient-to-r from-sky-500 to-fuchsia-500 text-xl text-white shadow">{a.icon}</div>
+                      <div className="min-w-0">
+                        <div className="font-semibold">
+                          {a.title}{" "}
+                          {a.unlockedAt && (
+                            <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200">
+                              unlocked
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-sm text-slate-600 dark:text-slate-400">{a.desc}</div>
+                        {a.unlockedAt && <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{new Date(a.unlockedAt).toLocaleString()}</div>}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardShell>
+
+            <CardShell>
+              <div className="text-lg font-semibold">Analytics – letzte 14 Tage ({target})</div>
+
               <div className="mt-3 overflow-auto rounded-2xl border border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-950/60">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-gradient-to-r from-sky-100 to-fuchsia-100 text-slate-700 dark:from-slate-900 dark:to-slate-900 dark:text-slate-200">
@@ -720,27 +985,19 @@ export default function Page() {
                       <th className="p-3">Gelernt</th>
                       <th className="p-3">Richtig</th>
                       <th className="p-3">Falsch</th>
+                      <th className="p-3">Min</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {Object.entries(data.dailyStats)
-                      .sort(([a], [b]) => (a < b ? 1 : -1))
-                      .slice(0, 14)
-                      .map(([day, s]) => (
-                        <tr key={day}>
-                          <td className="p-3">{day}</td>
-                          <td className="p-3">{s.reviewed}</td>
-                          <td className="p-3">{s.correct}</td>
-                          <td className="p-3">{s.wrong}</td>
-                        </tr>
-                      ))}
-                    {Object.keys(data.dailyStats).length === 0 && (
-                      <tr>
-                        <td className="p-3 text-slate-500 dark:text-slate-400" colSpan={4}>
-                          Noch keine Lern-Sessions.
-                        </td>
+                    {last14.map(({ day, s }) => (
+                      <tr key={day}>
+                        <td className="p-3">{day}</td>
+                        <td className="p-3">{s.reviewed}</td>
+                        <td className="p-3">{s.correct}</td>
+                        <td className="p-3">{s.wrong}</td>
+                        <td className="p-3">{s.minutes}</td>
                       </tr>
-                    )}
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -750,113 +1007,116 @@ export default function Page() {
 
         {view === "settings" && (
           <div className="mt-6 grid gap-4">
-            <h2 className="text-xl font-semibold">Einstellungen</h2>
+            <h2 className="text-xl font-semibold">Settings</h2>
 
             <CardShell>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm text-slate-600 dark:text-slate-400">Theme:</div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <div className="text-sm text-slate-600 dark:text-slate-400">Lernsprache</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(["EN", "ES", "FR", "RU"] as Lang[]).map((l) => (
+                      <button
+                        key={l}
+                        onClick={() => {
+                          setData((prev) => ({ ...prev, profile: { ...prev.profile, targetLang: l } }));
+                          // if no cards exist for that language, seed immediately
+                          setTimeout(() => {
+                            setData((prev) => {
+                              const has = prev.cards.some((c) => c.targetLang === l);
+                              if (has) return prev;
+                              return { ...prev, cards: [...seedCardsFromPack(l, prev.profile.level, 30), ...prev.cards] };
+                            });
+                          }, 0);
+                        }}
+                        className={`rounded-2xl border px-4 py-2 font-semibold shadow-sm hover:shadow ${
+                          target === l ? "border-indigo-200 bg-indigo-50 dark:border-indigo-900 dark:bg-slate-900" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
+                        }`}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Deutsch ist aktuell die Muttersprache (DE).</div>
+                </div>
+
+                <div>
+                  <div className="text-sm text-slate-600 dark:text-slate-400">Level</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(["BEGINNER", "INTERMEDIATE", "ADVANCED"] as Level[]).map((lv) => (
+                      <button
+                        key={lv}
+                        onClick={() => setData((prev) => ({ ...prev, profile: { ...prev.profile, level: lv } }))}
+                        className={`rounded-2xl border px-4 py-2 font-semibold shadow-sm hover:shadow ${
+                          data.profile.level === lv ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-slate-900" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
+                        }`}
+                      >
+                        {lv === "BEGINNER" ? "Beginner" : lv === "INTERMEDIATE" ? "Intermediate" : "Advanced"}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Level steuert nur die Mischung (mehr Wörter vs. mehr Sätze).</div>
+                </div>
+
+                <div>
+                  <div className="text-sm text-slate-600 dark:text-slate-400">Tagesziel</div>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      type="number"
+                      min={5}
+                      max={200}
+                      value={data.profile.dailyGoal}
+                      onChange={(e) =>
+                        setData((prev) => ({ ...prev, profile: { ...prev.profile, dailyGoal: clamp(Number(e.target.value), 5, 200) } }))
+                      }
+                      className="w-32 rounded-2xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-950"
+                    />
+                    <div className="self-center text-sm text-slate-600 dark:text-slate-400">Karten / Tag</div>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-sm text-slate-600 dark:text-slate-400">Content</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => addMoreStarterCards(25)}
+                      className="rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
+                    >
+                      ＋ 25 Starter-Karten
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!confirm("Alles zurücksetzen?")) return;
+                        const fresh = loadData();
+                        localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
+                        setData(fresh);
+                        setView("today");
+                      }}
+                      className="rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                    Nächster Schritt: “Download Packs” (online laden → offline speichern). Kann ich dir als nächstes direkt einbauen.
+                  </div>
+                </div>
+              </div>
+            </CardShell>
+
+            <CardShell>
+              <div className="text-sm text-slate-600 dark:text-slate-400">Palette</div>
+              <div className="mt-2 flex flex-wrap gap-2">
                 {(["ocean", "sunset", "lime", "grape"] as AppTheme[]).map((t) => (
                   <button
                     key={t}
                     onClick={() => setPalette(t)}
                     className={`rounded-2xl border px-4 py-2 font-semibold shadow-sm hover:shadow ${
-                      palette === t
-                        ? "border-indigo-200 bg-indigo-50 dark:border-indigo-900 dark:bg-slate-900"
-                        : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
+                      palette === t ? "border-indigo-200 bg-indigo-50 dark:border-indigo-900 dark:bg-slate-900" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
                     }`}
                   >
                     {t}
                   </button>
                 ))}
-              </div>
-
-              <div className="mt-5 flex flex-wrap gap-3">
-                <button
-                  onClick={exportJSON}
-                  className="rounded-2xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
-                >
-                  Export (JSON)
-                </button>
-                <button
-                  onClick={resetAll}
-                  className="rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
-                >
-                  Alles zurücksetzen
-                </button>
-              </div>
-
-              <div className="mt-5">
-                <div className="text-sm text-slate-500 dark:text-slate-400">Import (JSON)</div>
-                <textarea
-                  value={importText}
-                  onChange={(e) => setImportText(e.target.value)}
-                  className="mt-2 h-40 w-full rounded-2xl border border-slate-200 bg-white p-3 text-sm outline-none shadow-sm dark:border-slate-800 dark:bg-slate-950"
-                  placeholder='{"decks":[...],"cards":[...],"dailyStats":{...}}'
-                />
-                <button
-                  onClick={importJSON}
-                  className="mt-3 rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
-                >
-                  Import aus Text
-                </button>
-              </div>
-            </CardShell>
-
-            <CardShell>
-              <div className="text-lg font-semibold">Auto-Import (Tatoeba)</div>
-              <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                Importiert zufällige <b>Satzkarten</b> (Front=Quellsatz, Back=Übersetzung). Attribution wird als Hinweis gespeichert.
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <select
-                  className="rounded-2xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-950"
-                  value={importFrom}
-                  onChange={(e) => setImportFrom(e.target.value)}
-                >
-                  {Object.keys(UI_TO_TATOEBA).map((k) => (
-                    <option key={k} value={k}>
-                      {k}
-                    </option>
-                  ))}
-                </select>
-
-                <span className="px-2 py-2 text-slate-600 dark:text-slate-400">→</span>
-
-                <select
-                  className="rounded-2xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-950"
-                  value={importTo}
-                  onChange={(e) => setImportTo(e.target.value)}
-                >
-                  {Object.keys(UI_TO_TATOEBA).map((k) => (
-                    <option key={k} value={k}>
-                      {k}
-                    </option>
-                  ))}
-                </select>
-
-                <input
-                  type="number"
-                  min={10}
-                  max={200}
-                  value={importCount}
-                  onChange={(e) => setImportCount(Number(e.target.value))}
-                  className="w-28 rounded-2xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-950"
-                />
-
-                <button
-                  disabled={importing}
-                  onClick={importFromTatoeba}
-                  className="rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90 disabled:opacity-60"
-                >
-                  {importing ? "Import…" : "Import starten"}
-                </button>
-              </div>
-
-              {importStatus && <div className="mt-3 text-sm text-slate-700 dark:text-slate-200">{importStatus}</div>}
-
-              <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-                Hinweis: Damit das klappt, brauchst du die API Route <code className="px-1">src/app/api/tatoeba/route.ts</code> (wie oben gezeigt).
               </div>
             </CardShell>
           </div>
@@ -868,106 +1128,154 @@ export default function Page() {
   );
 }
 
-/** -----------------------------
- * Practice component
- * ------------------------------ */
+/** ===========================================
+ * Practice (no typing, only choosing)
+ * =========================================== */
 function Practice({
   cards,
+  targetLang,
+  nativeLang,
   onCorrect,
   onWrong,
 }: {
   cards: Card[];
+  targetLang: Lang;
+  nativeLang: "DE";
   onCorrect: () => void;
   onWrong: () => void;
 }) {
   const vocab = cards.filter((c) => c.kind === "vocab");
   const sentences = cards.filter((c) => c.kind === "sentence");
 
-  const [mode, setMode] = useState<"cloze" | "mc">("cloze");
-  const [reveal, setReveal] = useState(false);
+  const [mode, setMode] = useState<"wordpick" | "mc">("wordpick");
+  const [choiceCount, setChoiceCount] = useState<3 | 5>(5);
   const [currentId, setCurrentId] = useState<string>("");
+  const [feedback, setFeedback] = useState<null | { ok: boolean; correct: string }>(null);
 
+  // Initialisierung & Pool-Wechsel
   useEffect(() => {
-    const pool = mode === "cloze" ? sentences : vocab;
-    if (pool[0]) setCurrentId(pool[0].id);
-    setReveal(false);
+    const pool = mode === "wordpick" ? sentences : vocab;
+    if (pool.length > 0) setCurrentId(pool[0].id);
+    setFeedback(null);
   }, [mode, sentences.length, vocab.length]);
 
   const current = useMemo(() => {
-    const pool = mode === "cloze" ? sentences : vocab;
+    const pool = mode === "wordpick" ? sentences : vocab;
     return pool.find((x) => x.id === currentId) ?? pool[0];
   }, [mode, currentId, vocab, sentences]);
 
+  // Hilfsvariablen für Cloze (nur wenn im wordpick Modus)
+  const clozeData = useMemo(() => {
+    if (mode === "wordpick" && current) return makeCloze(current.front);
+    return { cloze: "", answer: "" };
+  }, [current, mode]);
+
+  // Nächste Karte wählen
+  const goNext = () => {
+    setFeedback(null);
+    const pool = mode === "wordpick" ? sentences : vocab;
+    if (pool.length > 1) {
+      const otherCards = pool.filter((c) => c.id !== current?.id);
+      setCurrentId(otherCards[Math.floor(Math.random() * otherCards.length)].id);
+    }
+  };
+
+  // Antwort-Optionen generieren
+  const options = useMemo(() => {
+    if (!current) return [];
+    if (mode === "wordpick") {
+      const poolWords = [
+        ...sentences.flatMap((s) => s.front.split(/\s+/).map((w) => w.replace(/[.,!?;:()]/g, ""))),
+        ...vocab.map((v) => v.front),
+      ].filter((w) => w.length >= 3);
+      return makeChoices(clozeData.answer, poolWords, choiceCount);
+    } else {
+      const poolBacks = vocab.map((v) => v.back);
+      return makeChoices(current.back, poolBacks, choiceCount);
+    }
+  }, [current, mode, clozeData.answer, vocab, sentences, choiceCount]);
+
   if (!current) {
     return (
-      <div className="mt-6 rounded-2xl border border-slate-200 bg-[var(--card)] p-6 dark:border-slate-800">
-        <div className="text-xl font-semibold">Noch keine passenden Karten.</div>
-        <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-          Erstelle zuerst Vokabel- oder Satzkarten im Tab “Decks”.
-        </div>
+      <div className="mt-6 rounded-2xl border border-slate-200 bg-[var(--card)] p-6 text-center">
+        <div className="text-xl font-semibold">Keine passenden Karten gefunden.</div>
+        <p className="text-sm text-slate-500">Füge Karten für diesen Modus hinzu.</p>
       </div>
     );
   }
 
-  if (mode === "cloze") {
-    const { cloze, answer } = makeCloze(current.front);
-
-    return (
-      <div className="mt-6 grid gap-4">
-        <div className="flex flex-wrap gap-2">
-          <ModeBtn active={mode === "cloze"} onClick={() => setMode("cloze")} label="Lückentext" />
-          <ModeBtn active={mode === "mc"} onClick={() => setMode("mc")} label="Multiple Choice" />
+  return (
+    <div className="mt-6 grid gap-4 animate-in fade-in duration-500">
+      {/* Header: Modus & Optionen */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex gap-2">
+          <ModeBtn active={mode === "wordpick"} onClick={() => { setMode("wordpick"); setFeedback(null); }} label="Wort wählen" />
+          <ModeBtn active={mode === "mc"} onClick={() => { setMode("mc"); setFeedback(null); }} label="Multiple Choice" />
         </div>
+        <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
+          <SmallToggle active={choiceCount === 3} onClick={() => setChoiceCount(3)} label="3" />
+          <SmallToggle active={choiceCount === 5} onClick={() => setChoiceCount(5)} label="5" />
+        </div>
+      </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-[var(--card)] p-6 shadow-sm dark:border-slate-800">
-          <div className="text-sm text-slate-600 dark:text-slate-400">Setze das fehlende Wort ein:</div>
-          <div className="mt-3 text-2xl font-black">{cloze}</div>
-
-          <button
-            className="mt-4 rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 px-4 py-2 font-semibold text-white shadow hover:opacity-90"
-            onClick={() => setReveal((r) => !r)}
-          >
-            {reveal ? "Antwort verstecken" : "Antwort zeigen"}
-          </button>
-
-          {reveal && (
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-white/60 p-4 dark:border-slate-800 dark:bg-slate-900/50">
-              <div className="font-semibold">Antwort: {answer}</div>
-              <div className="mt-2 text-sm text-slate-600 dark:text-slate-300">Übersetzung: {current.back}</div>
-              {current.example && (
-                <div className="mt-2 text-xs text-slate-500 dark:text-slate-300">{current.example}</div>
-              )}
-            </div>
-          )}
-
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <button
-              className="rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 px-4 py-3 font-semibold text-white shadow hover:opacity-90"
-              onClick={() => {
-                onWrong();
-                if (sentences.length > 1) setCurrentId(pickRandom(sentences).id);
-                setReveal(false);
-              }}
-            >
-              Nicht geschafft
-            </button>
-            <button
-              className="rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 py-3 font-semibold text-white shadow hover:opacity-90"
-              onClick={() => {
-                onCorrect();
-                if (sentences.length > 1) setCurrentId(pickRandom(sentences).id);
-                setReveal(false);
-              }}
-            >
-              Geschafft
-            </button>
+      {/* Die Lernkarte */}
+      <div className="rounded-3xl border border-slate-200 bg-[var(--card)] p-6 shadow-xl dark:border-slate-800">
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+            {mode === "wordpick" ? "Satz vervollständigen" : "Übersetzung wählen"}
+          </div>
+          <div className="flex gap-2">
+             <button className="rounded-xl bg-slate-100 dark:bg-slate-800 p-2 text-sm" onClick={() => speak(current.front, TTS_LANG[nativeLang])}>🔊 DE</button>
+             <button className="rounded-xl bg-slate-100 dark:bg-slate-800 p-2 text-sm" onClick={() => speak(current.back, TTS_LANG[targetLang])}>🔊 {targetLang}</button>
           </div>
         </div>
-      </div>
-    );
-  }
 
-  // MC vocab
+        {/* Die Frage */}
+        <div className="text-2xl font-black text-slate-800 dark:text-slate-100 mb-8">
+          {mode === "wordpick" ? clozeData.cloze : current.front}
+        </div>
+
+        {/* Antwortmöglichkeiten */}
+        <div className="grid gap-3">
+          {options.map((opt) => (
+            <button
+              key={opt}
+              disabled={!!feedback}
+              onClick={() => {
+                const isCorrect = mode === "wordpick" ? opt === clozeData.answer : opt === current.back;
+                setFeedback({ ok: isCorrect, correct: mode === "wordpick" ? clozeData.answer : current.back });
+                isCorrect ? onCorrect() : onWrong();
+                if (isCorrect) setTimeout(goNext, 600);
+              }}
+              className={`p-4 text-left rounded-2xl border-2 font-bold transition-all ${
+                feedback?.correct === opt 
+                  ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400" 
+                  : feedback && opt !== feedback.correct
+                  ? "opacity-40 border-slate-100 dark:border-slate-900"
+                  : "border-slate-100 dark:border-slate-800 bg-white/50 dark:bg-slate-950/50 hover:border-indigo-500 shadow-sm"
+              }`}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+
+        {/* Feedback bei Fehlern */}
+        {feedback && !feedback.ok && (
+          <div className="mt-6 p-5 rounded-2xl bg-rose-50 dark:bg-rose-900/20 border-2 border-rose-100 dark:border-rose-900 animate-in slide-in-from-top-2">
+            <div className="text-rose-600 dark:text-rose-400 font-black mb-1">❌ Fast! Richtig ist:</div>
+            <div className="text-lg font-bold text-slate-900 dark:text-white underline">{feedback.correct}</div>
+            <div className="mt-2 text-sm italic text-slate-500">"{current.back}"</div>
+            <button onClick={goNext} className="mt-4 w-full py-3 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-xl font-bold shadow-lg">
+              Weiter →
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Multiple Choice: choose correct translation
   const choices = useMemo(() => {
     const pool = vocab.map((v) => v.back);
     return makeChoices(current.back, pool, 4);
@@ -976,12 +1284,31 @@ function Practice({
   return (
     <div className="mt-6 grid gap-4">
       <div className="flex flex-wrap gap-2">
-        <ModeBtn active={mode === "cloze"} onClick={() => setMode("cloze")} label="Lückentext" />
-        <ModeBtn active={mode === "mc"} onClick={() => setMode("mc")} label="Multiple Choice" />
+        <ModeBtn active={mode === "wordpick"} onClick={() => { setMode("wordpick"); setFeedback(null); }} label="Wort wählen" />
+        <ModeBtn active={mode === "mc"} onClick={() => { setMode("mc"); setFeedback(null); }} label="Multiple Choice" />
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-[var(--card)] p-6 shadow-sm dark:border-slate-800">
-        <div className="text-sm text-slate-600 dark:text-slate-400">Wähle die richtige Übersetzung:</div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm text-slate-600 dark:text-slate-400">Wähle die richtige Übersetzung:</div>
+          <div className="flex gap-2">
+            <button
+              className="rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-3 py-1 text-sm font-semibold text-white shadow hover:opacity-90"
+              onClick={() => speak(current.front, TTS_LANG[nativeLang])}
+              title="Vorlesen (DE)"
+            >
+              🔊 DE
+            </button>
+            <button
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1 text-sm font-semibold shadow-sm hover:shadow dark:border-slate-800 dark:bg-slate-950"
+              onClick={stopSpeak}
+              title="Stop"
+            >
+              ⏹
+            </button>
+          </div>
+        </div>
+
         <div className="mt-3 text-2xl font-black">{current.front}</div>
 
         <div className="mt-4 grid gap-3">
@@ -1004,9 +1331,7 @@ function Practice({
           <div className="mt-5 rounded-2xl border border-slate-200 bg-white/60 p-4 dark:border-slate-800 dark:bg-slate-900/50">
             <div className="text-sm text-slate-600 dark:text-slate-300">Beispiel:</div>
             {current.example && <div className="mt-1 font-semibold">{current.example}</div>}
-            {current.exampleTranslation && (
-              <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">{current.exampleTranslation}</div>
-            )}
+            {current.exampleTranslation && <div className="mt-1 text-sm text-slate-600 dark:text-slate-300">{current.exampleTranslation}</div>}
           </div>
         )}
       </div>
@@ -1014,51 +1339,49 @@ function Practice({
   );
 }
 
-/** -----------------------------
- * UI Components
- * ------------------------------ */
+/** ===========================================
+ * UI
+ * =========================================== */
 function Header({
   view,
   setView,
-  activeDeck,
-  dueCount,
   mode,
   toggleMode,
+  level,
+  xp,
+  targetLang,
+  streak,
 }: {
   view: View;
   setView: (v: View) => void;
-  activeDeck?: Deck;
-  dueCount: number;
   mode: ThemeMode;
   toggleMode: () => void;
+  level: Level;
+  xp: number;
+  targetLang: Lang;
+  streak: number;
 }) {
+  const lvl = computeLevelFromXp(xp).level;
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
         <div className="text-2xl font-black">
           <span className="bg-gradient-to-r from-sky-600 via-indigo-600 to-fuchsia-600 bg-clip-text text-transparent dark:from-sky-300 dark:via-indigo-300 dark:to-fuchsia-300">
-            Lingua
-          </span>{" "}
-          <span className="text-slate-900 dark:text-slate-50">MVP</span>
+            SprachenlernApp
+          </span>
         </div>
         <div className="text-sm text-slate-600 dark:text-slate-400">
-          {activeDeck ? (
-            <>
-              {activeDeck.name} · <b className="text-slate-900 dark:text-slate-100">{dueCount}</b> fällig
-            </>
-          ) : (
-            "Kein Deck"
-          )}
+          Deutsch → <b className="text-slate-900 dark:text-slate-100">{targetLang}</b> · Level{" "}
+          <b className="text-slate-900 dark:text-slate-100">{lvl}</b> · {level === "BEGINNER" ? "Beginner" : level === "INTERMEDIATE" ? "Intermediate" : "Advanced"} ·{" "}
+          <b className="text-slate-900 dark:text-slate-100">{streak}</b>🔥
         </div>
       </div>
 
       <div className="hidden items-center gap-2 md:flex">
-        <TopButton active={view === "learn"} onClick={() => setView("learn")} label="Lernen" />
+        <TopButton active={view === "today"} onClick={() => setView("today")} label="Heute" />
         <TopButton active={view === "practice"} onClick={() => setView("practice")} label="Übungen" />
-        <TopButton active={view === "decks"} onClick={() => setView("decks")} label="Decks" />
-        <TopButton active={view === "stats"} onClick={() => setView("stats")} label="Stats" />
+        <TopButton active={view === "profile"} onClick={() => setView("profile")} label="Profil" />
         <TopButton active={view === "settings"} onClick={() => setView("settings")} label="Settings" />
-
         <button
           onClick={toggleMode}
           className="ml-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 font-semibold shadow-sm hover:shadow dark:border-slate-800 dark:bg-slate-950"
@@ -1070,108 +1393,84 @@ function Header({
     </div>
   );
 }
-
 function TopButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
   return (
     <button
       onClick={onClick}
       className={`rounded-2xl border px-4 py-2 font-semibold shadow-sm hover:shadow ${
-        active
-          ? "border-indigo-200 bg-indigo-50 dark:border-indigo-900 dark:bg-slate-900"
-          : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
+        active ? "border-indigo-200 bg-indigo-50 dark:border-indigo-900 dark:bg-slate-900" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
       }`}
     >
       {label}
     </button>
   );
 }
-
 function BottomNav({ view, setView }: { view: View; setView: (v: View) => void }) {
   return (
     <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-950/70 md:hidden">
-      <div className="mx-auto grid max-w-5xl grid-cols-5 gap-1 p-2">
-        <NavBtn active={view === "learn"} onClick={() => setView("learn")} label="Lernen" />
+      <div className="mx-auto grid max-w-5xl grid-cols-4 gap-1 p-2">
+        <NavBtn active={view === "today"} onClick={() => setView("today")} label="Heute" />
         <NavBtn active={view === "practice"} onClick={() => setView("practice")} label="Übungen" />
-        <NavBtn active={view === "decks"} onClick={() => setView("decks")} label="Decks" />
-        <NavBtn active={view === "stats"} onClick={() => setView("stats")} label="Stats" />
+        <NavBtn active={view === "profile"} onClick={() => setView("profile")} label="Profil" />
         <NavBtn active={view === "settings"} onClick={() => setView("settings")} label="Settings" />
       </div>
     </div>
   );
 }
-
 function NavBtn({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
   return (
     <button
       onClick={onClick}
-      className={`rounded-2xl border px-3 py-2 text-sm font-semibold shadow-sm ${
-        active
-          ? "border-indigo-200 bg-indigo-50 dark:border-indigo-900 dark:bg-slate-900"
-          : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
+      className={`rounded-2xl border px-2 py-2 text-sm font-semibold shadow-sm ${
+        active ? "border-indigo-200 bg-indigo-50 dark:border-indigo-900 dark:bg-slate-900" : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
       }`}
     >
       {label}
     </button>
   );
 }
-
 function CardShell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-[var(--card)] p-5 shadow-sm dark:border-slate-800">
-      {children}
-    </div>
-  );
+  return <div className="rounded-2xl border border-slate-200 bg-[var(--card)] p-5 shadow-sm dark:border-slate-800">{children}</div>;
 }
-
 function Pill({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 px-3 py-1 text-sm font-semibold text-white shadow">
-      {children}
-    </div>
-  );
+  return <div className="rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 px-3 py-1 text-sm font-semibold text-white shadow">{children}</div>;
 }
-
 function FancyBtn({ variant, onClick, label }: { variant: "good" | "bad"; onClick: () => void; label: string }) {
   const cls = variant === "good" ? "from-emerald-500 to-teal-500" : "from-rose-500 to-orange-500";
   return (
-    <button
-      onClick={onClick}
-      className={`rounded-2xl bg-gradient-to-r ${cls} px-4 py-3 font-semibold text-white shadow hover:opacity-90`}
-    >
+    <button onClick={onClick} className={`rounded-2xl bg-gradient-to-r ${cls} px-4 py-3 font-semibold text-white shadow hover:opacity-90`}>
       {label}
     </button>
   );
 }
-
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/60">
       <div className="text-sm text-slate-600 dark:text-slate-400">{label}</div>
       <div className="mt-1 text-2xl font-black bg-gradient-to-r from-sky-600 to-fuchsia-600 bg-clip-text text-transparent dark:from-sky-300 dark:to-fuchsia-300">
         {value}
+        {suffix ? <span className="ml-1 text-base font-semibold">{suffix}</span> : null}
       </div>
     </div>
   );
 }
-
-function EmptyState() {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white/70 p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-950/60">
-      <div className="text-xl font-semibold">Keine fälligen Karten 🎉</div>
-      <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-        Geh zu “Decks” und füge neue Karten hinzu, oder übe im Tab “Übungen”.
-      </div>
-    </div>
-  );
-}
-
 function ModeBtn({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
   return (
     <button
       onClick={onClick}
-      className={`rounded-2xl border px-4 py-2 font-semibold ${
-        active ? "bg-indigo-50 dark:bg-slate-900" : "bg-white dark:bg-slate-950"
-      } border-slate-200 shadow-sm hover:shadow dark:border-slate-800`}
+      className={`rounded-2xl border px-4 py-2 font-semibold ${active ? "bg-indigo-50 dark:bg-slate-900" : "bg-white dark:bg-slate-950"} border-slate-200 shadow-sm hover:shadow dark:border-slate-800`}
+    >
+      {label}
+    </button>
+  );
+}
+function SmallToggle({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-2xl border px-3 py-1 text-sm font-semibold shadow-sm hover:shadow dark:border-slate-800 ${
+        active ? "border-indigo-200 bg-indigo-50 dark:bg-slate-900" : "border-slate-200 bg-white dark:bg-slate-950"
+      }`}
     >
       {label}
     </button>
