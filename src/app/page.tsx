@@ -292,15 +292,14 @@ function loadData(): AppData {
     createdAt: now,
   };
 
-  const seed = seedCardsFromPack("EN", "BEGINNER", 30);
-
   return {
-    cards: seed,
+    cards: [], 
     profile: prof,
     achievements: defaultAchievements(),
     dailyStatsByLang: { EN: {}, ES: {}, FR: {}, RU: {} },
   };
 }
+
 function saveData(data: AppData) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
