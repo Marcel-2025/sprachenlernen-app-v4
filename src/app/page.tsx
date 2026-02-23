@@ -306,42 +306,37 @@ function saveData(data: AppData) {
 }
 
 /** ---------- Seeding logic (auto content) ---------- */
-function seedCardsFromPack(targetLang: Lang, level: Level, maxCards: number) {
-  const pack = PACKS[targetLang];
+function seedCardsFromDownloadedPack(rawCards: any[], level: Level, maxCards: number) {
   const now = Date.now();
 
-  // simple level scaling: beginner uses more vocab than sentences; advanced more sentences
+  // 1. Trenne die geladenen Karten in Vokabeln und Sätze
+  const allVocabs = rawCards.filter(c => c.kind === "vocab");
+  const allSentences = rawCards.filter(c => c.kind === "sentence");
+
+  // 2. Berechne das Verhältnis basierend auf dem Level
+  // Anfänger: mehr Vokabeln | Fortgeschrittene: mehr Sätze
   const vocabRatio = level === "BEGINNER" ? 0.7 : level === "INTERMEDIATE" ? 0.55 : 0.45;
-  const vocabCount = Math.max(5, Math.round(maxCards * vocabRatio));
-  const sentCount = Math.max(3, maxCards - vocabCount);
+  const vocabCount = Math.round(maxCards * vocabRatio);
+  const sentCount = maxCards - vocabCount;
 
-  const vocabs = pack.vocab.slice(0, vocabCount).map((v) => ({
-    id: uid(),
-    targetLang,
-    kind: "vocab" as const,
-    front: v.de,
-    back: v.x,
-    example: v.ex,
-    exampleTranslation: v.exTr,
+  // 3. Wähle die entsprechende Anzahl aus und füge SRS-Daten hinzu
+  const selectedVocabs = allVocabs.slice(0, vocabCount).map((v) => ({
+    ...v,
     due: now,
     intervalDays: 0,
-    ease: 2.0,
+    ease: 2.5,
     lapses: 0,
   }));
 
-  const sents = pack.sentences.slice(0, sentCount).map((s) => ({
-    id: uid(),
-    targetLang,
-    kind: "sentence" as const,
-    front: s.de,
-    back: s.x,
+  const selectedSents = allSentences.slice(0, sentCount).map((s) => ({
+    ...s,
     due: now,
     intervalDays: 0,
-    ease: 2.0,
+    ease: 2.5,
     lapses: 0,
   }));
 
-  return [...vocabs, ...sents].slice(0, maxCards);
+  return [...selectedVocabs, ...selectedSents];
 }
 
 /** ===========================================
@@ -583,43 +578,54 @@ async function downloadAndAddPack() {
   try {
     setIsDownloading(true);
     const targetLang = data.profile.targetLang;
+    const userLevel = data.profile.level;
 
-    // 1. Pack laden (von GitHub Raw URL via loadLanguagePack.ts)
-    // Dies prüft automatisch erst in der IndexedDB (offline) und dann online
+    // 1. Pack laden (GitHub -> IndexedDB -> Cache)
     const rawCards = await loadLanguagePack(targetLang);
-    const newCardsRaw = rawCards as any[];
+    const allCards = rawCards as any[];
 
     setData((prev) => {
-      // 2. Dubletten-Check: Wir vergleichen IDs, um nichts doppelt zu laden
+      // 2. Dubletten-Check
       const existingIds = new Set(prev.cards.map((c) => c.id));
-      
-      const initializedCards: Card[] = newCardsRaw
-        .filter((c) => !existingIds.has(c.id))
-        .map((c) => ({
-          ...c,
-          // Wir fügen die Lern-Metadaten hinzu, die nicht im JSON stehen
-          due: Date.now(),
-          intervalDays: 0,
-          ease: 2.5,
-          lapses: 0,
-        }));
+      const availableCards = allCards.filter((c) => !existingIds.has(c.id));
 
-      if (initializedCards.length === 0) {
+      if (availableCards.length === 0) {
         alert("Du hast bereits alle verfügbaren Karten für diese Sprache geladen.");
         return prev;
       }
 
-      // 3. Neue Karten vorne anfügen
+      // 3. Level-Logik: Wie viele Vokabeln vs. Sätze?
+      // Anfänger: 70% Vokabeln | Fortgeschritten: 45% Vokabeln
+      const maxToLoad = 25; // Wie viele Karten pro Klick geladen werden sollen
+      const vocabRatio = userLevel === "BEGINNER" ? 0.7 : userLevel === "INTERMEDIATE" ? 0.55 : 0.45;
+      
+      const targetVocabCount = Math.round(maxToLoad * vocabRatio);
+      const targetSentCount = maxToLoad - targetVocabCount;
+
+      const newVocabs = availableCards.filter(c => c.kind === "vocab").slice(0, targetVocabCount);
+      const newSents = availableCards.filter(c => c.kind === "sentence").slice(0, targetSentCount);
+      
+      const selectedCards = [...newVocabs, ...newSents];
+
+      // 4. Initialisieren mit SRS-Werten
+      const initializedCards: Card[] = selectedCards.map((c) => ({
+        ...c,
+        due: Date.now(),
+        intervalDays: 0,
+        ease: 2.5,
+        lapses: 0,
+      }));
+
       return { 
         ...prev, 
         cards: [...initializedCards, ...prev.cards] 
       };
     });
 
-    alert(`${targetLang} Pack erfolgreich synchronisiert!`);
+    alert(`Neue Inhalte für ${targetLang} wurden deinem Stapel hinzugefügt!`);
   } catch (err) {
     console.error(err);
-    alert("Fehler beim Herunterladen des Packs. Prüfe deine Verbindung.");
+    alert("Fehler beim Herunterladen. Bitte prüfe die Internetverbindung.");
   } finally {
     setIsDownloading(false);
   }
