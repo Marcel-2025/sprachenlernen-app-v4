@@ -1,0 +1,23 @@
+[
+  {
+    "id": "en_test_1",
+    "targetLang": "EN",
+    "kind": "vocab",
+    "front": "Hund",
+    "back": "dog"
+  },
+  {
+    "id": "en_test_2",
+    "targetLang": "EN",
+    "kind": "vocab",
+    "front": "Katze",
+    "back": "cat"
+  },
+  {
+    "id": "en_test_3",
+    "targetLang": "EN",
+    "kind": "sentence",
+    "front": "Der Hund bellt laut.",
+    "back": "The dog barks loudly."
+  }
+]
