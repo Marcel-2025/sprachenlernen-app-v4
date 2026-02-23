@@ -8,8 +8,8 @@ export async function loadLanguagePack(
   const cached = await loadPack(lang);
   if (cached) return cached;
 
-  // 🌐 download
-  const url = `https://example.com/packs/${lang}.json`;
+  // 🌐 download directly from your GitHub repository!
+  const url = `https://raw.githubusercontent.com/Marcel-2025/sprachenlernen-app-v4/main/public/packs/${lang}.json`;
   const res = await fetch(url);
 
   const reader = res.body?.getReader();
