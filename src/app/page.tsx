@@ -389,17 +389,16 @@ export default function Page() {
 
   const target = data.profile.targetLang;
 
-  /** ensure we always have some cards for selected language */
+  /** Stellt sicher, dass wir Inhalte haben, wenn die Sprache gewechselt wird */
   useEffect(() => {
-    const has = data.cards.some((c) => c.targetLang === target);
-    if (has) return;
-
-    setData((prev) => ({
-      ...prev,
-      cards: [...seedCardsFromPack(prev.profile.targetLang, prev.profile.level, 30), ...prev.cards],
-    }));
+    const hasCards = data.cards.some((c) => c.targetLang === data.profile.targetLang);
+    
+    // Wenn keine Karten da sind, triggere den asynchronen Download
+    if (!hasCards) {
+      downloadAndAddPack(); 
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target]);
+  }, [data.profile.targetLang]);
 
   const allCardsForLang = useMemo(() => data.cards.filter((c) => c.targetLang === target), [data.cards, target]);
 
